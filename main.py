@@ -308,7 +308,7 @@ def init_db():
             "vip_odds_info": "🔥 10+ Verified VIP Odds Daily (Singles & Accumulator Tickets)",
             "admin_contact_url": f"https://t.me/{BRAND_TAG.lstrip('@')}",
             "website_url": DEFAULT_WEBSITE_URL,
-            "auto_channel_buttons": "1",
+            "auto_channel_buttons": "0",
         }
         for k, v in default_settings.items():
             db.execute(
@@ -442,35 +442,35 @@ async def answer_callback(callback_id, text=""):
 
 
 # --------------------------------------------------
-# KEYBOARDS & LUXURY UI
+# COLORFUL KEYBOARDS & LUXURY UI
 # --------------------------------------------------
 
 def main_menu_keyboard(user_id=None):
     website_url = get_website_url()
     rows = [
         [
-            {"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"},
-            {"text": "🌐 Open VIP App", "web_app": {"url": PUBLIC_URL.rstrip("/") + "/app"}, "style": "success"},
+            {"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "danger"},
+            {"text": "🌐 Open VIP App", "web_app": {"url": PUBLIC_URL.rstrip("/") + "/app"}, "style": "primary"},
         ],
         [
-            {"text": "⚽ Today's Free Predictions", "callback_data": "menu:free_tips"},
-            {"text": "💎 VIP Predictions", "callback_data": "menu:vip_tips"},
+            {"text": "⚽ Today's Free Predictions", "callback_data": "menu:free_tips", "style": "success"},
+            {"text": "💎 VIP Predictions", "callback_data": "menu:vip_tips", "style": "primary"},
         ],
         [
-            {"text": "📊 Previous Results", "callback_data": "menu:results"},
-            {"text": "🏆 Winning Tickets", "callback_data": "menu:tickets"},
+            {"text": "📊 Previous Results", "callback_data": "menu:results", "style": "primary"},
+            {"text": "🏆 Winning Tickets", "callback_data": "menu:tickets", "style": "success"},
         ],
         [
-            {"text": "📅 Prediction History", "callback_data": "menu:history"},
-            {"text": "💳 Payment & Subscription", "callback_data": "menu:payments"},
+            {"text": "📅 Prediction History", "callback_data": "menu:history", "style": "primary"},
+            {"text": "💳 Payment & Subscription", "callback_data": "menu:payments", "style": "success"},
         ],
         [
-            {"text": "👤 My Account", "callback_data": "menu:account"},
-            {"text": "📞 Contact Admin", "callback_data": "menu:contact"},
+            {"text": "👤 My Account", "callback_data": "menu:account", "style": "primary"},
+            {"text": "📞 Contact Admin", "callback_data": "menu:contact", "style": "success"},
         ],
         [
-            {"text": "ℹ️ How It Works", "callback_data": "menu:how"},
-            {"text": "🌐 Visit Website", "url": website_url},
+            {"text": "ℹ️ How It Works", "callback_data": "menu:how", "style": "primary"},
+            {"text": "🌐 Visit Website", "url": website_url, "style": "success"},
         ],
     ]
     if user_id and is_admin(user_id):
@@ -482,6 +482,14 @@ def plans_keyboard():
     with connect_db() as db:
         plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
 
+    style_map = {
+        "daily": "success",
+        "weekly": "primary",
+        "monthly": "primary",
+        "premium": "danger",
+        "lifetime": "danger",
+    }
+
     rows = []
     for p in plans:
         duration = "Lifetime" if p["is_lifetime"] else f"{p['days']}d"
@@ -489,11 +497,11 @@ def plans_keyboard():
         rows.append([{
             "text": f"👑 {title} ({duration}) — KES {p['price']}",
             "callback_data": f"plan:{p['name']}",
-            "style": "primary",
+            "style": style_map.get(p["name"], "primary"),
         }])
     rows.append([
-        {"text": "📞 Contact Admin", "url": get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")},
-        {"text": "🌐 Website", "url": get_website_url()},
+        {"text": "📞 Contact Admin", "url": get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}"), "style": "success"},
+        {"text": "🌐 Website", "url": get_website_url(), "style": "primary"},
     ])
     rows.append([{"text": "⬅️ Back to Main Menu", "callback_data": "menu:home"}])
     return {"inline_keyboard": rows}
@@ -505,18 +513,18 @@ def channel_post_keyboard(include_custom=False):
     website_url = get_website_url()
 
     rows = [[
-        {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "primary"},
+        {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "danger"},
         {"text": "📞 Contact Admin", "url": contact_url, "style": "success"},
     ]]
     if website_url:
         short_domain = re.sub(r"^https?://", "", website_url).rstrip("/")
-        rows.append([{"text": f"🌐 Visit Website • {short_domain}", "url": website_url}])
+        rows.append([{"text": f"🌐 Visit Website • {short_domain}", "url": website_url, "style": "primary"}])
 
     if include_custom:
         with connect_db() as db:
             buttons = db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
         for b in buttons:
-            rows.append([{"text": b["label"], "url": b["url"]}])
+            rows.append([{"text": b["label"], "url": b["url"], "style": "primary"}])
     return {"inline_keyboard": rows}
 
 
@@ -528,22 +536,23 @@ def admin_keyboard():
                 {"text": "⚽ Match Studio", "callback_data": "admin:matches", "style": "success"},
             ],
             [
-                {"text": "💰 VIP Packages (Edit Prices)", "callback_data": "admin:packages"},
-                {"text": "🎯 Set VIP Odds Info", "callback_data": "admin:vip_odds"},
+                {"text": "💰 VIP Packages (Edit Prices)", "callback_data": "admin:packages", "style": "success"},
+                {"text": "🎯 Set VIP Odds Info", "callback_data": "admin:vip_odds", "style": "primary"},
             ],
             [
-                {"text": "🧾 Transactions", "callback_data": "admin:transactions"},
-                {"text": "👥 VIP Members", "callback_data": "admin:members"},
+                {"text": "🧾 Transactions", "callback_data": "admin:transactions", "style": "primary"},
+                {"text": "👥 VIP Members", "callback_data": "admin:members", "style": "success"},
             ],
             [
                 {"text": "📝 Post to Main Channel", "callback_data": "admin:post_channel", "style": "success"},
+                {"text": "📎 Add Buttons to Post", "callback_data": "admin:attach_buttons", "style": "danger"},
+            ],
+            [
                 {"text": "📢 Publish VIP Advert", "callback_data": "admin:post", "style": "primary"},
+                {"text": "📣 Broadcast", "callback_data": "admin:broadcast", "style": "danger"},
             ],
             [
-                {"text": "📣 Broadcast", "callback_data": "admin:broadcast"},
-                {"text": "⚙️ Channels & API", "callback_data": "admin:channels"},
-            ],
-            [
+                {"text": "⚙️ Channels & API", "callback_data": "admin:channels", "style": "primary"},
                 {"text": "🏠 Main Menu", "callback_data": "menu:home"},
             ],
         ]
@@ -682,7 +691,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
             {
                 "inline_keyboard": [
                     [{"text": "🔄 I Have Paid — Verify Payment", "callback_data": f"verify:{external_ref}", "style": "success"}],
-                    [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
                 ]
             },
         )
@@ -731,7 +740,7 @@ async def submit_manual_mobile_money(user_id, plan_name, provider, text_input):
         f"👑 Package: <b>{html_escape(plan_title)}</b> (KES {amount})\n"
         f"🧾 Reference: <code>{html_escape(txn_ref)}</code>\n\n"
         "🔒 Our admin will verify this transaction ID directly and activate your VIP immediately.",
-        {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
+        {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
     )
 
     await send_message(
@@ -832,7 +841,7 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
             "👇 Tap your private single-use link to enter the VIP channel:",
             {
                 "inline_keyboard": [
-                    [{"text": "👑 ENTER VIP CHANNEL", "url": invite["invite_link"], "style": "primary"}],
+                    [{"text": "👑 ENTER VIP CHANNEL", "url": invite["invite_link"], "style": "danger"}],
                     [{"text": "💎 View VIP Predictions", "callback_data": "menu:vip_tips", "style": "success"}],
                 ]
             },
@@ -978,6 +987,34 @@ def format_match_block(m, index=None):
     )
 
 
+def extract_channel_msg_id(message, text):
+    fwd_origin = message.get("forward_origin") or {}
+    if fwd_origin.get("type") == "channel" and fwd_origin.get("message_id"):
+        return int(fwd_origin["message_id"])
+    if message.get("forward_from_message_id"):
+        return int(message["forward_from_message_id"])
+    t = (text or "").strip()
+    if t.isdigit():
+        return int(t)
+    m = re.search(r"t\.me/(?:c/\d+/|[^/]+/)(\d+)", t)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+async def attach_buttons_to_main_post(msg_id):
+    global bot_username
+    if not bot_username:
+        me = await telegram("getMe", {})
+        bot_username = me["username"]
+    main_chat = get_setting("main_channel_id", CHANNEL_ID)
+    return await telegram("editMessageReplyMarkup", {
+        "chat_id": main_chat,
+        "message_id": int(msg_id),
+        "reply_markup": channel_post_keyboard(include_custom=False),
+    })
+
+
 async def broadcast_new_tips(tier, text_body):
     col = "notify_vip" if tier == "VIP" else "notify_free"
     with connect_db() as db:
@@ -1100,7 +1137,7 @@ async def publish_custom_main_post(text_body):
 
 
 async def handle_channel_post(post):
-    if get_setting("auto_channel_buttons", "1") != "1":
+    if get_setting("auto_channel_buttons", "0") != "1":
         return
 
     if post.get("reply_markup"):
@@ -1166,7 +1203,7 @@ async def show_predictions_list(chat_id, tier):
         await send_message(
             chat_id,
             f"ℹ️ No published <b>{tier}</b> predictions yet.\nCheck back soon! {BRAND_TAG}",
-            {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
+            {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
         )
         return
 
@@ -1177,8 +1214,8 @@ async def show_predictions_list(chat_id, tier):
         f"{title} ({BRAND_TAG})\n━━━━━━━━━━━━━━━━━━━━\n\n{body}",
         {
             "inline_keyboard": [
-                [{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"}],
-                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                [{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "danger"}],
+                [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
             ]
         },
     )
@@ -1202,7 +1239,7 @@ async def show_results_or_tickets(chat_id, only_won=False):
         await send_message(
             chat_id,
             f"{header}\n\nℹ️ No settled results recorded yet.",
-            {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
+            {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
         )
         return
 
@@ -1212,7 +1249,7 @@ async def show_results_or_tickets(chat_id, only_won=False):
         f"{header} ({PROJECT_NAME} • {BRAND_TAG})\n"
         f"📈 Verified Win Rate: <b>{win_rate}</b> ({won_count}W / {lost_count}L)\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n{body}",
-        {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
+        {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
     )
 
 
@@ -1253,12 +1290,12 @@ async def show_account(chat_id, user_id):
         {
             "inline_keyboard": [
                 [
-                    {"text": f"Free Tips: {n_free}", "callback_data": "notify:free"},
-                    {"text": f"VIP Tips: {n_vip}", "callback_data": "notify:vip"},
+                    {"text": f"Free Tips: {n_free}", "callback_data": "notify:free", "style": "success"},
+                    {"text": f"VIP Tips: {n_vip}", "callback_data": "notify:vip", "style": "primary"},
                 ],
                 [
-                    {"text": f"Announcements: {n_news}", "callback_data": "notify:news"},
-                    {"text": "👑 Renew / Join VIP", "callback_data": "menu:join_vip", "style": "primary"},
+                    {"text": f"Announcements: {n_news}", "callback_data": "notify:news", "style": "primary"},
+                    {"text": "👑 Renew / Join VIP", "callback_data": "menu:join_vip", "style": "danger"},
                 ],
                 [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
             ]
@@ -1288,8 +1325,8 @@ async def show_user_payments(chat_id, user_id):
         text,
         {
             "inline_keyboard": [
-                [{"text": "👑 Subscribe / Renew VIP", "callback_data": "menu:join_vip", "style": "primary"}],
-                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                [{"text": "👑 Subscribe / Renew VIP", "callback_data": "menu:join_vip", "style": "danger"}],
+                [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
             ]
         },
     )
@@ -1342,14 +1379,15 @@ async def show_admin_packages(chat_id):
         f"🗄 Storage: <b>{storage_label()}</b>\n\n"
     )
     rows = []
-    for p in plans:
+    style_cycle = ["success", "primary", "primary", "danger", "danger"]
+    for idx, p in enumerate(plans):
         title = p["title"] or p["name"].title()
         dur = "Lifetime" if p["is_lifetime"] else f"{p['days']}d"
         txt += f"• <b>{html_escape(title)}</b> (<code>{p['name']}</code>) — <b>KES {p['price']}</b> ({dur})\n"
         rows.append([{
             "text": f"✏️ Edit {title} (KES {p['price']})",
             "callback_data": f"admin:editprice:{p['name']}",
-            "style": "primary",
+            "style": style_cycle[idx % len(style_cycle)],
         }])
 
     txt += "\nTap a package below to update its price in real time (or use <code>/setprice monthly 1000</code>):"
@@ -1374,15 +1412,15 @@ async def show_admin_matches(chat_id):
         [{"text": "➕ Guided Add Match", "callback_data": "admin:add_match", "style": "primary"}],
         [
             {"text": f"📢 Post Queued FREE ({queued_free})", "callback_data": "admin:pub_free", "style": "success"},
-            {"text": f"💎 Post Queued VIP ({queued_vip})", "callback_data": "admin:pub_vip", "style": "success"},
+            {"text": f"💎 Post Queued VIP ({queued_vip})", "callback_data": "admin:pub_vip", "style": "danger"},
         ],
     ]
     for m in recent:
         text += f"• <b>#{m['id']}</b> [{m['tier']}] {html_escape(m['match_name'])} — {m['result']}\n"
         rows.append([
-            {"text": f"#{m['id']} ✅Won", "callback_data": f"admin:res:{m['id']}:WON"},
-            {"text": "❌Lost", "callback_data": f"admin:res:{m['id']}:LOST"},
-            {"text": "⏸Postp", "callback_data": f"admin:res:{m['id']}:POSTPONED"},
+            {"text": f"#{m['id']} ✅Won", "callback_data": f"admin:res:{m['id']}:WON", "style": "success"},
+            {"text": "❌Lost", "callback_data": f"admin:res:{m['id']}:LOST", "style": "danger"},
+            {"text": "⏸Postp", "callback_data": f"admin:res:{m['id']}:POSTPONED", "style": "primary"},
             {"text": "🗑Del", "callback_data": f"admin:delmatch:{m['id']}", "style": "danger"},
         ])
     rows.append([{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}])
@@ -1414,7 +1452,7 @@ async def show_admin_transactions(chat_id):
 
 
 async def show_admin_channels_panel(chat_id):
-    auto_btn = get_setting("auto_channel_buttons", "1") == "1"
+    auto_btn = get_setting("auto_channel_buttons", "0") == "1"
     await send_message(
         chat_id,
         f"⚙️ <b>CHANNELS & API STATUS ({PROJECT_NAME})</b>\n\n"
@@ -1426,12 +1464,12 @@ async def show_admin_channels_panel(chat_id):
         f"• Referral Bonus Days: <code>{get_setting('referral_reward_days', '2')}</code>\n"
         f"• Website URL: <code>{html_escape(get_website_url())}</code>\n"
         f"• Contact Admin URL: <code>{html_escape(get_setting('admin_contact_url'))}</code>\n"
-        f"• Auto-Attach Buttons on Manual Channel Posts: <b>{'ON ✅' if auto_btn else 'OFF 🔕'}</b>\n\n"
+        f"• Auto-Attach Buttons on Manual Channel Posts: <b>{'ON ✅' if auto_btn else 'OFF 🔕 (Manual)'}</b>\n\n"
         "Update settings with <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
         {
             "inline_keyboard": [
-                [{"text": f"Toggle Auto Channel Buttons ({'ON' if auto_btn else 'OFF'})", "callback_data": "admin:toggle_autobtn", "style": "primary"}],
-                [{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}],
+                [{"text": f"Toggle Auto Channel Buttons ({'ON' if auto_btn else 'OFF'})", "callback_data": "admin:toggle_autobtn", "style": "danger" if auto_btn else "success"}],
+                [{"text": "⬅️ Back to Admin", "callback_data": "admin:home", "style": "primary"}],
             ]
         },
     )
@@ -1493,6 +1531,19 @@ async def handle_message(message):
                 await send_message(chat_id, "⛔ Unauthorized.")
                 return
             await send_message(chat_id, f"⚡ <b>{PROJECT_NAME.upper()} ADMIN</b> ({BRAND_TAG})", admin_keyboard())
+            return
+
+        if cmd == "/addpostbuttons" and is_admin(user_id):
+            arg = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+            msg_id = extract_channel_msg_id(message, arg)
+            if not msg_id:
+                await send_message(chat_id, "Usage: <code>/addpostbuttons https://t.me/yourchannel/45</code> or <code>/addpostbuttons 45</code>")
+                return
+            try:
+                await attach_buttons_to_main_post(msg_id)
+                await send_message(chat_id, f"✅ Colorful buttons attached to Main Channel post <code>{msg_id}</code>!")
+            except Exception as e:
+                await send_message(chat_id, f"⚠️ Could not attach buttons: <code>{html_escape(str(e))}</code>")
             return
 
         if cmd == "/setvipodds" and is_admin(user_id):
@@ -1655,6 +1706,32 @@ async def handle_message(message):
     sess = get_session(user_id)
     if sess:
         state, payload = sess["state"], sess["payload"]
+
+        if state == "WAIT_ATTACH_POST" and is_admin(user_id):
+            clear_session(user_id)
+            msg_id = extract_channel_msg_id(message, text)
+            if not msg_id:
+                await send_message(
+                    chat_id,
+                    "⚠️ Could not read a post ID. Forward the post from your Main Channel, or paste its link/message ID.",
+                    admin_keyboard(),
+                )
+                return
+            try:
+                await attach_buttons_to_main_post(msg_id)
+                await send_message(
+                    chat_id,
+                    f"✅ Attached colorful buttons (<b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b>, <b>🌐 Website</b>) to post <code>{msg_id}</code>!",
+                    admin_keyboard(),
+                )
+            except Exception as e:
+                await send_message(
+                    chat_id,
+                    f"⚠️ Could not attach buttons to post <code>{msg_id}</code>:\n<code>{html_escape(str(e))}</code>\n\n"
+                    "Make sure the bot is admin with <b>Edit Messages of Others</b> permission.",
+                    admin_keyboard(),
+                )
+            return
 
         if state == "WAIT_MPESA_PHONE":
             phone = normalize_phone(text)
@@ -1865,9 +1942,9 @@ async def handle_callback(query):
             "🔒 <i>All transactions are verified via official API/admin before activation.</i>",
             {
                 "inline_keyboard": [
-                    [{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"}],
-                    [{"text": "🌐 Visit Website", "url": get_website_url()}],
-                    [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                    [{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "danger"}],
+                    [{"text": "🌐 Visit Website", "url": get_website_url(), "style": "success"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
                 ]
             },
         )
@@ -1901,8 +1978,8 @@ async def handle_callback(query):
             {
                 "inline_keyboard": [
                     [{"text": "🇰🇪 M-Pesa STK Push (Instant)", "callback_data": f"pay:{plan_name}:mpesa", "style": "success"}],
-                    [{"text": "🔴 Airtel Money", "callback_data": f"pay:{plan_name}:airtel"}],
-                    [{"text": "🟡 MTN Mobile Money", "callback_data": f"pay:{plan_name}:mtn"}],
+                    [{"text": "🔴 Airtel Money", "callback_data": f"pay:{plan_name}:airtel", "style": "danger"}],
+                    [{"text": "🟡 MTN Mobile Money", "callback_data": f"pay:{plan_name}:mtn", "style": "primary"}],
                     [{"text": "⬅️ Back", "callback_data": "menu:join_vip"}],
                 ]
             },
@@ -2017,7 +2094,15 @@ async def handle_callback(query):
             await send_message(
                 chat_id,
                 "📝 Type the message you want to post to your <b>Main Channel</b>.\n\n"
-                "The bot will automatically attach <b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b> & <b>🌐 Website</b> buttons underneath it! (or /cancel)",
+                "The bot will automatically attach colorful <b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b> & <b>🌐 Website</b> buttons underneath it! (or /cancel)",
+            )
+        elif action == "attach_buttons":
+            set_session(user_id, "WAIT_ATTACH_POST")
+            await send_message(
+                chat_id,
+                "📎 <b>MANUAL CHANNEL BUTTONS</b>\n\n"
+                "Forward the post from your Main Channel here, OR paste its post link / message ID "
+                "(e.g. <code>https://t.me/yourchannel/45</code> or <code>45</code>), or /cancel:",
             )
         elif action == "transactions":
             await show_admin_transactions(chat_id)
@@ -2048,7 +2133,7 @@ async def handle_callback(query):
         elif action == "channels":
             await show_admin_channels_panel(chat_id)
         elif action == "toggle_autobtn":
-            curr = get_setting("auto_channel_buttons", "1")
+            curr = get_setting("auto_channel_buttons", "0")
             set_setting("auto_channel_buttons", "0" if curr == "1" else "1")
             await show_admin_channels_panel(chat_id)
         elif action == "post":
