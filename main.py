@@ -20,7 +20,7 @@ except ImportError:
 
 # --------------------------------------------------
 # PRIME TIPS VIP PLATFORM (@isla_olivia0)
-# Telegram Bot + PayHero M-Pesa + Web/Mini-App API
+# Telegram Bot + PayHero M-Pesa + Real-Time DB + Web/Mini-App API
 # --------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
@@ -101,8 +101,14 @@ def format_eat(dt_or_iso):
     return parse_utc(dt_or_iso).astimezone(EAT).strftime("%d %b %Y, %I:%M %p EAT")
 
 
+def storage_label():
+    if USE_POSTGRES:
+        return "PostgreSQL ✅ (Real-Time Persistent)"
+    return "SQLite ⚠️ (Local file — set DATABASE_URL for permanent storage)"
+
+
 # --------------------------------------------------
-# DUAL DATABASE LAYER (PostgreSQL + SQLite fallback)
+# REAL-TIME DUAL DATABASE LAYER (PostgreSQL + SQLite)
 # --------------------------------------------------
 
 class DBConn:
@@ -128,6 +134,8 @@ def connect_db():
     else:
         raw = sqlite3.connect(DB_PATH, timeout=30)
         raw.row_factory = sqlite3.Row
+        raw.execute("PRAGMA journal_mode=WAL")
+        raw.execute("PRAGMA synchronous=NORMAL")
 
     db = DBConn(raw)
     try:
@@ -501,7 +509,7 @@ def admin_keyboard():
                 {"text": "⚽ Match Studio", "callback_data": "admin:matches", "style": "success"},
             ],
             [
-                {"text": "💰 VIP Packages", "callback_data": "admin:packages"},
+                {"text": "💰 VIP Packages (Edit Prices)", "callback_data": "admin:packages"},
                 {"text": "🎯 Set VIP Odds Info", "callback_data": "admin:vip_odds"},
             ],
             [
@@ -547,6 +555,13 @@ def normalize_phone(phone):
 def get_plan(plan_name):
     with connect_db() as db:
         return db.execute("SELECT * FROM plans WHERE name=?", (plan_name,)).fetchone()
+
+
+def update_plan_price(plan_name, new_price):
+    with connect_db() as db:
+        db.execute("UPDATE plans SET price=? WHERE name=?", (int(new_price), plan_name))
+        row = db.execute("SELECT * FROM plans WHERE name=?", (plan_name,)).fetchone()
+    return row
 
 
 def mark_order_failed(external_ref):
@@ -1284,6 +1299,7 @@ async def show_admin_stats(chat_id):
     await send_message(
         chat_id,
         f"📊 <b>{PROJECT_NAME.upper()} ANALYTICS</b> ({BRAND_TAG})\n"
+        f"🗄 Storage: <b>{storage_label()}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Registered Users: <b>{total_users}</b>\n"
         f"👑 Active VIP Members: <b>{active_vip}</b>\n"
@@ -1295,6 +1311,30 @@ async def show_admin_stats(chat_id):
         f"❌ Failed Orders: <b>{failed_cnt}</b>",
         admin_keyboard(),
     )
+
+
+async def show_admin_packages(chat_id):
+    with connect_db() as db:
+        plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
+
+    txt = (
+        f"💰 <b>VIP PACKAGES ({PROJECT_NAME})</b>\n"
+        f"🗄 Storage: <b>{storage_label()}</b>\n\n"
+    )
+    rows = []
+    for p in plans:
+        title = p["title"] or p["name"].title()
+        dur = "Lifetime" if p["is_lifetime"] else f"{p['days']}d"
+        txt += f"• <b>{html_escape(title)}</b> (<code>{p['name']}</code>) — <b>KES {p['price']}</b> ({dur})\n"
+        rows.append([{
+            "text": f"✏️ Edit {title} (KES {p['price']})",
+            "callback_data": f"admin:editprice:{p['name']}",
+            "style": "primary",
+        }])
+
+    txt += "\nTap a package below to update its price in real time (or use <code>/setprice monthly 1000</code>):"
+    rows.append([{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}])
+    await send_message(chat_id, txt, {"inline_keyboard": rows})
 
 
 async def show_admin_matches(chat_id):
@@ -1358,6 +1398,7 @@ async def show_admin_channels_panel(chat_id):
     await send_message(
         chat_id,
         f"⚙️ <b>CHANNELS & API STATUS ({PROJECT_NAME})</b>\n\n"
+        f"• Database: <b>{storage_label()}</b>\n"
         f"• Main Channel: <code>{get_setting('main_channel_id', CHANNEL_ID)}</code>\n"
         f"• VIP Channel: <code>{get_setting('vip_channel_id', VIP_CHANNEL_ID)}</code>\n"
         f"• PayHero Channel ID: <code>{get_setting('payhero_channel_id', PAYHERO_CHANNEL_ID)}</code>\n"
@@ -1478,11 +1519,14 @@ async def handle_message(message):
                 return
             plan_name, price = parts[1].lower(), int(parts[2])
             if not get_plan(plan_name) or price < 1:
-                await send_message(chat_id, "⚠️ Invalid plan or price.")
+                await send_message(chat_id, "⚠️ Invalid plan or price. Use: daily, weekly, monthly, premium, or lifetime.")
                 return
-            with connect_db() as db:
-                db.execute("UPDATE plans SET price=? WHERE name=?", (price, plan_name))
-            await send_message(chat_id, f"✅ Updated <b>{plan_name.title()}</b> to <b>KES {price}</b>.")
+            updated = update_plan_price(plan_name, price)
+            await send_message(
+                chat_id,
+                f"✅ Stored <b>{html_escape(updated['title'] or plan_name.title())}</b> = <b>KES {updated['price']}</b>\n"
+                f"🗄 Storage: <b>{storage_label()}</b>",
+            )
             return
 
         if cmd == "/grant" and is_admin(user_id):
@@ -1636,6 +1680,20 @@ async def handle_message(message):
                 f"✅ <b>VIP Odds Description Updated!</b>\n\n🎯 {html_escape(text[:220])}",
                 admin_keyboard(),
             )
+            return
+
+        if state == "WAIT_PLAN_PRICE" and is_admin(user_id):
+            clear_session(user_id)
+            if not text.isdigit() or int(text) < 1:
+                await send_message(chat_id, "⚠️ Enter a whole-number KES price (e.g. <code>500</code>).")
+                return
+            updated = update_plan_price(payload, int(text))
+            log.info("Admin updated plan %s price to KES %s", payload, updated["price"])
+            await send_message(
+                chat_id,
+                f"✅ Updated <b>{html_escape(updated['title'] or payload.title())}</b> to <b>KES {updated['price']}</b>!",
+            )
+            await show_admin_packages(chat_id)
             return
 
         if state == "WAIT_CHANNEL_POST" and is_admin(user_id):
@@ -1906,13 +1964,18 @@ async def handle_callback(query):
                 db.execute("DELETE FROM matches WHERE id=?", (int(parts[2]),))
             await show_admin_matches(chat_id)
         elif action == "packages":
-            with connect_db() as db:
-                plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
-            txt = "💰 <b>VIP PACKAGES</b>\n\n" + "\n".join(
-                f"• <code>{p['name']}</code> — KES {p['price']} ({'Lifetime' if p['is_lifetime'] else str(p['days']) + 'd'})"
-                for p in plans
-            ) + "\n\nChange with: <code>/setprice &lt;name&gt; &lt;amount&gt;</code>"
-            await send_message(chat_id, txt, admin_keyboard())
+            await show_admin_packages(chat_id)
+        elif action == "editprice" and len(parts) == 3:
+            plan = get_plan(parts[2])
+            if not plan:
+                await send_message(chat_id, "⚠️ Package not found.")
+                return
+            set_session(user_id, "WAIT_PLAN_PRICE", parts[2])
+            await send_message(
+                chat_id,
+                f"💰 Enter the new <b>KES price</b> for <b>{html_escape(plan['title'] or parts[2].title())}</b> "
+                f"(currently <b>KES {plan['price']}</b>), or /cancel:",
+            )
         elif action == "vip_odds":
             set_session(user_id, "WAIT_VIP_ODDS")
             current = get_setting("vip_odds_info")
@@ -2053,7 +2116,7 @@ async def background_worker():
                 "secret_token": WEBHOOK_SECRET,
                 "allowed_updates": ["message", "callback_query", "channel_post"],
             })
-            log.info("%s platform started as @%s", PROJECT_NAME, bot_username)
+            log.info("%s started as @%s | storage=%s", PROJECT_NAME, bot_username, "postgresql" if USE_POSTGRES else "sqlite")
             break
         except Exception:
             log.exception("Telegram webhook setup failed (attempt %s/5)", attempt + 1)
@@ -2091,12 +2154,16 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def home():
-    return {"status": f"{PROJECT_NAME} Platform running", "brand": BRAND_TAG}
+    return {
+        "status": f"{PROJECT_NAME} Platform running",
+        "brand": BRAND_TAG,
+        "storage": "postgresql" if USE_POSTGRES else "sqlite",
+    }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "storage": "postgresql" if USE_POSTGRES else "sqlite"}
 
 
 @app.get("/api/packages")
