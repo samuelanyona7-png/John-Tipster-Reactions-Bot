@@ -28,6 +28,7 @@ log = logging.getLogger("prime-tips-vip")
 
 PROJECT_NAME = "Prime Tips VIP"
 BRAND_TAG = "@isla_olivia0"
+DEFAULT_WEBSITE_URL = "https://primetips.site"
 
 
 def env_str(name, default=""):
@@ -306,6 +307,7 @@ def init_db():
             "referral_reward_days": "2",
             "vip_odds_info": "🔥 10+ Verified VIP Odds Daily (Singles & Accumulator Tickets)",
             "admin_contact_url": f"https://t.me/{BRAND_TAG.lstrip('@')}",
+            "website_url": DEFAULT_WEBSITE_URL,
             "auto_channel_buttons": "1",
         }
         for k, v in default_settings.items():
@@ -327,6 +329,13 @@ def set_setting(key, value):
             "INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, str(value)),
         )
+
+
+def get_website_url():
+    url = get_setting("website_url", DEFAULT_WEBSITE_URL).strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
 
 
 def is_admin(user_id):
@@ -437,6 +446,7 @@ async def answer_callback(callback_id, text=""):
 # --------------------------------------------------
 
 def main_menu_keyboard(user_id=None):
+    website_url = get_website_url()
     rows = [
         [
             {"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"},
@@ -460,6 +470,7 @@ def main_menu_keyboard(user_id=None):
         ],
         [
             {"text": "ℹ️ How It Works", "callback_data": "menu:how"},
+            {"text": "🌐 Visit Website", "url": website_url},
         ],
     ]
     if user_id and is_admin(user_id):
@@ -480,7 +491,10 @@ def plans_keyboard():
             "callback_data": f"plan:{p['name']}",
             "style": "primary",
         }])
-    rows.append([{"text": "📞 Contact Admin", "url": get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")}])
+    rows.append([
+        {"text": "📞 Contact Admin", "url": get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")},
+        {"text": "🌐 Website", "url": get_website_url()},
+    ])
     rows.append([{"text": "⬅️ Back to Main Menu", "callback_data": "menu:home"}])
     return {"inline_keyboard": rows}
 
@@ -488,11 +502,16 @@ def plans_keyboard():
 def channel_post_keyboard(include_custom=False):
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
     join_url = f"https://t.me/{bot_username}?start=vip" if bot_username else contact_url
+    website_url = get_website_url()
 
     rows = [[
         {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "primary"},
         {"text": "📞 Contact Admin", "url": contact_url, "style": "success"},
     ]]
+    if website_url:
+        short_domain = re.sub(r"^https?://", "", website_url).rstrip("/")
+        rows.append([{"text": f"🌐 Visit Website • {short_domain}", "url": website_url}])
+
     if include_custom:
         with connect_db() as db:
             buttons = db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
@@ -1049,7 +1068,7 @@ async def publish_vip_post():
             "⚡ Unlock <b>premium football predictions</b>, daily singles & winning slips.\n"
             "💳 Instant payment via <b>M-Pesa, Airtel Money & MTN</b>.\n"
             "🚀 Automatic VIP channel access right after confirmation.\n\n"
-            "👇 <b>TAP BELOW TO JOIN VIP OR CONTACT ADMIN</b>"
+            "👇 <b>TAP BELOW TO JOIN VIP, VISIT OUR WEBSITE OR CONTACT ADMIN</b>"
         ),
         "reply_markup": channel_post_keyboard(include_custom=True),
     })
@@ -1128,7 +1147,8 @@ async def show_main_menu(chat_id, user_id):
         f"👑 <b>{PROJECT_NAME.upper()}</b>  •  {BRAND_TAG}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Status: {sub_badge}\n"
-        f"🎯 <b>VIP Odds:</b> {html_escape(vip_odds_info)}\n\n"
+        f"🎯 <b>VIP Odds:</b> {html_escape(vip_odds_info)}\n"
+        f"🌐 <b>Website:</b> {html_escape(get_website_url())}\n\n"
         "⚽ <i>Luxury Football Predictions & Automated VIP Platform</i>\n"
         "Tap <b>👑 JOIN VIP NOW</b> for instant M-Pesa activation 👇",
         main_menu_keyboard(user_id),
@@ -1404,6 +1424,7 @@ async def show_admin_channels_panel(chat_id):
         f"• PayHero Channel ID: <code>{get_setting('payhero_channel_id', PAYHERO_CHANNEL_ID)}</code>\n"
         f"• PayHero Auth: <code>****{PAYHERO_AUTH_TOKEN[-4:]}</code>\n"
         f"• Referral Bonus Days: <code>{get_setting('referral_reward_days', '2')}</code>\n"
+        f"• Website URL: <code>{html_escape(get_website_url())}</code>\n"
         f"• Contact Admin URL: <code>{html_escape(get_setting('admin_contact_url'))}</code>\n"
         f"• Auto-Attach Buttons on Manual Channel Posts: <b>{'ON ✅' if auto_btn else 'OFF 🔕'}</b>\n\n"
         "Update settings with <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
@@ -1489,7 +1510,7 @@ async def handle_message(message):
                 await send_message(chat_id, "Usage: <code>/postchannel Today's VIP ticket is ready! Tap below.</code>")
                 return
             await publish_custom_main_post(body)
-            await send_message(chat_id, "✅ Posted to Main Channel with <b>👑 JOIN VIP NOW</b> & <b>📞 Contact Admin</b> buttons!")
+            await send_message(chat_id, "✅ Posted to Main Channel with <b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b> & <b>🌐 Website</b> buttons!")
             return
 
         if cmd == "/addbutton" and is_admin(user_id):
@@ -1612,6 +1633,7 @@ async def handle_message(message):
                 "referral_reward_days",
                 "vip_odds_info",
                 "admin_contact_url",
+                "website_url",
                 "auto_channel_buttons",
             }
             if len(parts) != 3 or parts[1] not in allowed:
@@ -1701,7 +1723,7 @@ async def handle_message(message):
             await publish_custom_main_post(text)
             await send_message(
                 chat_id,
-                "✅ Published to Main Channel with <b>👑 JOIN VIP NOW</b> and <b>📞 Contact Admin</b> buttons!",
+                "✅ Published to Main Channel with <b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b> & <b>🌐 Website</b> buttons!",
                 admin_keyboard(),
             )
             return
@@ -1841,7 +1863,13 @@ async def handle_callback(query):
             "3️⃣ Confirm payment on your phone.\n"
             "4️⃣ Receive your private VIP invite link automatically!\n\n"
             "🔒 <i>All transactions are verified via official API/admin before activation.</i>",
-            {"inline_keyboard": [[{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"}], [{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
+            {
+                "inline_keyboard": [
+                    [{"text": "👑 JOIN VIP NOW", "callback_data": "menu:join_vip", "style": "primary"}],
+                    [{"text": "🌐 Visit Website", "url": get_website_url()}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                ]
+            },
         )
         return
 
@@ -1989,7 +2017,7 @@ async def handle_callback(query):
             await send_message(
                 chat_id,
                 "📝 Type the message you want to post to your <b>Main Channel</b>.\n\n"
-                "The bot will automatically attach <b>👑 JOIN VIP NOW</b> and <b>📞 Contact Admin</b> buttons underneath it! (or /cancel)",
+                "The bot will automatically attach <b>👑 JOIN VIP NOW</b>, <b>📞 Contact Admin</b> & <b>🌐 Website</b> buttons underneath it! (or /cancel)",
             )
         elif action == "transactions":
             await show_admin_transactions(chat_id)
@@ -2157,6 +2185,7 @@ async def home():
     return {
         "status": f"{PROJECT_NAME} Platform running",
         "brand": BRAND_TAG,
+        "website": get_website_url(),
         "storage": "postgresql" if USE_POSTGRES else "sqlite",
     }
 
@@ -2203,6 +2232,7 @@ async def api_account(user_id: int, x_api_key: str = Header(default="")):
 async def mini_app():
     bot_link = f"https://t.me/{bot_username}?start=vip" if bot_username else "#"
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
+    website_url = get_website_url()
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2218,6 +2248,7 @@ async def mini_app():
   .pill{{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;background:#10b98122;color:#10b981;border:1px solid #10b98155}}
   .btn{{display:block;text-align:center;margin-top:12px;padding:12px;border-radius:12px;background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-weight:700;text-decoration:none}}
   .btn-contact{{background:linear-gradient(90deg,#059669,#10b981)}}
+  .btn-web{{background:linear-gradient(90deg,#d97706,#f59e0b);color:#0f172a}}
 </style>
 </head>
 <body>
@@ -2229,6 +2260,7 @@ async def mini_app():
   </div>
   <div id="content" class="card">Loading live predictions & VIP packages...</div>
   <a class="btn" href="{bot_link}">⚡ Activate VIP via M-Pesa / Mobile Money</a>
+  <a class="btn btn-web" href="{website_url}">🌐 Visit Our Website (primetips.site)</a>
   <a class="btn btn-contact" href="{contact_url}">📞 Contact Admin ({BRAND_TAG})</a>
 <script>
 Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages').then(r=>r.json())])
