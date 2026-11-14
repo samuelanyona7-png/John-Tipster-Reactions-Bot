@@ -19,13 +19,14 @@ except ImportError:
     psycopg2 = None
 
 # --------------------------------------------------
-# JOHN TIPSTER VIP PLATFORM (@isla_olivia0)
+# PRIME TIPS VIP PLATFORM (@isla_olivia0)
 # Telegram Bot + PayHero M-Pesa + Web/Mini-App API
 # --------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("john-tipster-vip")
+log = logging.getLogger("prime-tips-vip")
 
+PROJECT_NAME = "Prime Tips VIP"
 BRAND_TAG = "@isla_olivia0"
 
 
@@ -56,6 +57,7 @@ EAT = timezone(timedelta(hours=3))
 STK_COOLDOWN_SECONDS = 45
 
 bot_username = None
+seen_media_groups = []
 
 
 def check_settings():
@@ -184,7 +186,6 @@ def init_db():
             )
         """)
 
-        # Migrate legacy sessions table if it has old `plan` column
         if USE_POSTGRES:
             has_old_sessions = db.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_name='sessions' AND column_name='plan'"
@@ -261,7 +262,6 @@ def init_db():
             )
         """)
 
-        # Safe migrations for pre-existing databases
         ensure_column(db, "plans", "title", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "plans", "benefits", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "plans", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
@@ -296,6 +296,9 @@ def init_db():
             "vip_channel_id": VIP_CHANNEL_ID,
             "payhero_channel_id": PAYHERO_CHANNEL_ID,
             "referral_reward_days": "2",
+            "vip_odds_info": "🔥 10+ Verified VIP Odds Daily (Singles & Accumulator Tickets)",
+            "admin_contact_url": f"https://t.me/{BRAND_TAG.lstrip('@')}",
+            "auto_channel_buttons": "1",
         }
         for k, v in default_settings.items():
             db.execute(
@@ -469,7 +472,24 @@ def plans_keyboard():
             "callback_data": f"plan:{p['name']}",
             "style": "primary",
         }])
+    rows.append([{"text": "📞 Contact Admin", "url": get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")}])
     rows.append([{"text": "⬅️ Back to Main Menu", "callback_data": "menu:home"}])
+    return {"inline_keyboard": rows}
+
+
+def channel_post_keyboard(include_custom=False):
+    contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
+    join_url = f"https://t.me/{bot_username}?start=vip" if bot_username else contact_url
+
+    rows = [[
+        {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "primary"},
+        {"text": "📞 Contact Admin", "url": contact_url, "style": "success"},
+    ]]
+    if include_custom:
+        with connect_db() as db:
+            buttons = db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
+        for b in buttons:
+            rows.append([{"text": b["label"], "url": b["url"]}])
     return {"inline_keyboard": rows}
 
 
@@ -482,15 +502,19 @@ def admin_keyboard():
             ],
             [
                 {"text": "💰 VIP Packages", "callback_data": "admin:packages"},
+                {"text": "🎯 Set VIP Odds Info", "callback_data": "admin:vip_odds"},
+            ],
+            [
                 {"text": "🧾 Transactions", "callback_data": "admin:transactions"},
-            ],
-            [
                 {"text": "👥 VIP Members", "callback_data": "admin:members"},
-                {"text": "📣 Broadcast", "callback_data": "admin:broadcast"},
             ],
             [
-                {"text": "⚙️ Channels & API", "callback_data": "admin:channels"},
+                {"text": "📝 Post to Main Channel", "callback_data": "admin:post_channel", "style": "success"},
                 {"text": "📢 Publish VIP Advert", "callback_data": "admin:post", "style": "primary"},
+            ],
+            [
+                {"text": "📣 Broadcast", "callback_data": "admin:broadcast"},
+                {"text": "⚙️ Channels & API", "callback_data": "admin:channels"},
             ],
             [
                 {"text": "🏠 Main Menu", "callback_data": "menu:home"},
@@ -559,7 +583,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
         )
         return
 
-    external_ref = "JT" + secrets.token_hex(8).upper()
+    external_ref = "PT" + secrets.token_hex(8).upper()
     amount = int(plan["price"])
     ph_channel = int(get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID))
     plan_title = plan["title"] or f"{plan_name.title()} VIP"
@@ -756,7 +780,7 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
         log.warning("Pre-invite unban skipped for %s", user_id)
 
     try:
-        invite_payload = {"chat_id": vip_chat, "member_limit": 1, "name": f"VIP {user_id}"}
+        invite_payload = {"chat_id": vip_chat, "member_limit": 1, "name": f"Prime Tips VIP {user_id}"}
         if not is_lifetime:
             invite_payload["expire_date"] = int(expiry.timestamp())
 
@@ -767,7 +791,7 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
         await send_message(
             user_id,
             "🎉 <b>VIP MEMBERSHIP ACTIVATED!</b>\n\n"
-            f"👑 <b>JOHN TIPSTER VIP ({BRAND_TAG})</b>\n"
+            f"👑 <b>{PROJECT_NAME.upper()} ({BRAND_TAG})</b>\n"
             f"💎 Package: <b>{html_escape(display_title)}</b>\n"
             f"{receipt_line}"
             f"📅 Expires: <b>{exp_text}</b>\n\n"
@@ -811,7 +835,7 @@ async def reward_referrer_if_eligible(paid_user_id):
             await send_message(
                 referrer_id,
                 f"🎁 <b>REFERRAL REWARD UNLOCKED!</b>\n\n"
-                f"Your invited friend subscribed to VIP. You received <b>+{reward_days} free VIP day(s)</b>! {BRAND_TAG}",
+                f"Your invited friend subscribed to {PROJECT_NAME}. You received <b>+{reward_days} free VIP day(s)</b>! {BRAND_TAG}",
             )
         except Exception:
             pass
@@ -875,7 +899,7 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
 
     await send_message(
         ADMIN_USER_ID,
-        "✅ <b>VIP PAYMENT CONFIRMED</b>\n\n"
+        f"✅ <b>{PROJECT_NAME.upper()} PAYMENT CONFIRMED</b>\n\n"
         f"🆔 User: <code>{order['user_id']}</code>\n"
         f"💼 Plan: <b>{html_escape(order['plan'].title())}</b> — KES {order['amount']}\n"
         f"🏦 Method: <b>{html_escape(order['provider'].upper())}</b>\n"
@@ -900,7 +924,7 @@ async def process_payhero_callback(payload):
 
 
 # --------------------------------------------------
-# MATCHES, PUBLISHING & RESULTS
+# MATCHES, CHANNEL POSTING & RESULTS
 # --------------------------------------------------
 
 def format_match_block(m, index=None):
@@ -930,7 +954,7 @@ async def broadcast_new_tips(tier, text_body):
         if tier == "VIP" and not has_active_vip(uid):
             continue
         try:
-            await send_message(uid, f"🔔 <b>NEW {tier} PREDICTIONS POSTED!</b>\n\n{text_body}")
+            await send_message(uid, f"🔔 <b>NEW {tier} PREDICTIONS POSTED! ({PROJECT_NAME})</b>\n\n{text_body}")
         except Exception:
             pass
 
@@ -954,31 +978,30 @@ async def publish_match_batch(tier, match_ids=None):
         return None
 
     target_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID) if tier == "VIP" else get_setting("main_channel_id", CHANNEL_ID)
+    vip_odds_info = get_setting("vip_odds_info")
     header = (
-        f"💎 <b>JOHN TIPSTER VIP PREDICTIONS</b> ({BRAND_TAG})\n"
+        f"💎 <b>{PROJECT_NAME.upper()} — VIP PICKS</b> ({BRAND_TAG})\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         if tier == "VIP"
-        else f"⚽ <b>TODAY'S FREE PREDICTIONS</b> ({BRAND_TAG})\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        else f"⚽ <b>{PROJECT_NAME.upper()} — TODAY'S FREE PICKS</b> ({BRAND_TAG})\n━━━━━━━━━━━━━━━━━━━━\n\n"
     )
 
     body = "\n".join(format_match_block(m, i + 1) for i, m in enumerate(rows))
-    footer = f"\n━━━━━━━━━━━━━━━━━━━━\n🔥 Powered by <b>{BRAND_TAG}</b>"
+    footer = (
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 <b>VIP Status:</b> {html_escape(vip_odds_info)}\n"
+        f"🔥 Powered by <b>{PROJECT_NAME} ({BRAND_TAG})</b>"
+    )
 
     if not bot_username:
         me = await telegram("getMe", {})
         bot_username = me["username"]
 
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "👑 JOIN VIP NOW", "url": f"https://t.me/{bot_username}?start=vip", "style": "primary"}
-        ]]
-    }
-
     msg = await telegram("sendMessage", {
         "chat_id": target_chat,
         "parse_mode": "HTML",
         "text": header + body + footer,
-        "reply_markup": keyboard,
+        "reply_markup": channel_post_keyboard(include_custom=False),
         "disable_web_page_preview": True,
     })
 
@@ -1000,29 +1023,20 @@ async def publish_vip_post():
         me = await telegram("getMe", {})
         bot_username = me["username"]
 
-    join_url = f"https://t.me/{bot_username}?start=vip"
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "primary"}
-        ]]
-    }
-    with connect_db() as db:
-        buttons = db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
-    for b in buttons:
-        keyboard["inline_keyboard"].append([{"text": b["label"], "url": b["url"]}])
-
+    vip_odds_info = get_setting("vip_odds_info")
     main_chat = get_setting("main_channel_id", CHANNEL_ID)
     msg = await telegram("sendMessage", {
         "chat_id": main_chat,
         "parse_mode": "HTML",
         "text": (
-            f"👑 <b>JOHN TIPSTER VIP PREDICTIONS</b> ({BRAND_TAG})\n\n"
-            "⚡ Unlock <b>high-accuracy VIP slips</b>, daily singles & accumulators.\n"
+            f"👑 <b>{PROJECT_NAME.upper()}</b> ({BRAND_TAG})\n\n"
+            f"🎯 <b>VIP Odds Available:</b>\n{html_escape(vip_odds_info)}\n\n"
+            "⚡ Unlock <b>premium football predictions</b>, daily singles & winning slips.\n"
             "💳 Instant payment via <b>M-Pesa, Airtel Money & MTN</b>.\n"
             "🚀 Automatic VIP channel access right after confirmation.\n\n"
-            "👇 <b>TAP BELOW TO JOIN VIP NOW</b>"
+            "👇 <b>TAP BELOW TO JOIN VIP OR CONTACT ADMIN</b>"
         ),
-        "reply_markup": keyboard,
+        "reply_markup": channel_post_keyboard(include_custom=True),
     })
     try:
         await telegram("pinChatMessage", {
@@ -1035,17 +1049,71 @@ async def publish_vip_post():
     return msg
 
 
+async def publish_custom_main_post(text_body):
+    global bot_username
+    if not bot_username:
+        me = await telegram("getMe", {})
+        bot_username = me["username"]
+
+    main_chat = get_setting("main_channel_id", CHANNEL_ID)
+    return await telegram("sendMessage", {
+        "chat_id": main_chat,
+        "parse_mode": "HTML",
+        "text": f"{html_escape(text_body)}\n\n🔥 <b>{PROJECT_NAME}</b> ({BRAND_TAG})",
+        "reply_markup": channel_post_keyboard(include_custom=False),
+        "disable_web_page_preview": True,
+    })
+
+
+async def handle_channel_post(post):
+    if get_setting("auto_channel_buttons", "1") != "1":
+        return
+
+    if post.get("reply_markup"):
+        return
+
+    if any(k in post for k in ("pinned_message", "new_chat_title", "new_chat_photo", "delete_chat_photo")):
+        return
+
+    chat = post.get("chat", {})
+    chat_id = str(chat.get("id", ""))
+    chat_username = f"@{chat['username']}" if chat.get("username") else ""
+    main_chat = get_setting("main_channel_id", CHANNEL_ID).strip()
+
+    if chat_id != main_chat and (not chat_username or chat_username.lower() != main_chat.lower()):
+        return
+
+    mgid = post.get("media_group_id")
+    if mgid:
+        if mgid in seen_media_groups:
+            return
+        seen_media_groups.append(mgid)
+        if len(seen_media_groups) > 100:
+            seen_media_groups.pop(0)
+
+    try:
+        await telegram("editMessageReplyMarkup", {
+            "chat_id": chat["id"],
+            "message_id": post["message_id"],
+            "reply_markup": channel_post_keyboard(include_custom=False),
+        })
+    except Exception as e:
+        log.warning("Could not attach buttons to channel post %s: %s", post.get("message_id"), e)
+
+
 # --------------------------------------------------
 # USER VIEWS
 # --------------------------------------------------
 
 async def show_main_menu(chat_id, user_id):
     sub_badge = "💎 <b>VIP ACTIVE</b>" if has_active_vip(user_id) else "🆓 <b>FREE MEMBER</b>"
+    vip_odds_info = get_setting("vip_odds_info")
     await send_message(
         chat_id,
-        f"👑 <b>JOHN TIPSTER PREDICTIONS</b>  •  {BRAND_TAG}\n"
+        f"👑 <b>{PROJECT_NAME.upper()}</b>  •  {BRAND_TAG}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Status: {sub_badge}\n\n"
+        f"Status: {sub_badge}\n"
+        f"🎯 <b>VIP Odds:</b> {html_escape(vip_odds_info)}\n\n"
         "⚽ <i>Luxury Football Predictions & Automated VIP Platform</i>\n"
         "Tap <b>👑 JOIN VIP NOW</b> for instant M-Pesa activation 👇",
         main_menu_keyboard(user_id),
@@ -1067,7 +1135,7 @@ async def show_predictions_list(chat_id, tier):
         )
         return
 
-    title = "💎 <b>LATEST VIP PREDICTIONS</b>" if tier == "VIP" else "⚽ <b>TODAY'S FREE PREDICTIONS</b>"
+    title = f"💎 <b>{PROJECT_NAME.upper()} — VIP PICKS</b>" if tier == "VIP" else f"⚽ <b>{PROJECT_NAME.upper()} — FREE PICKS</b>"
     body = "\n".join(format_match_block(m, i + 1) for i, m in enumerate(rows))
     await send_message(
         chat_id,
@@ -1106,7 +1174,7 @@ async def show_results_or_tickets(chat_id, only_won=False):
     body = "\n".join(format_match_block(m, i + 1) for i, m in enumerate(rows))
     await send_message(
         chat_id,
-        f"{header} ({BRAND_TAG})\n"
+        f"{header} ({PROJECT_NAME} • {BRAND_TAG})\n"
         f"📈 Verified Win Rate: <b>{win_rate}</b> ({won_count}W / {lost_count}L)\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n{body}",
         {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
@@ -1139,7 +1207,7 @@ async def show_account(chat_id, user_id):
 
     await send_message(
         chat_id,
-        f"👤 <b>MY ACCOUNT</b> ({BRAND_TAG})\n"
+        f"👤 <b>MY ACCOUNT — {PROJECT_NAME.upper()}</b> ({BRAND_TAG})\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
         f"👑 VIP: {vip_status}\n\n"
@@ -1171,7 +1239,7 @@ async def show_user_payments(chat_id, user_id):
         ).fetchall()
 
     vip_line = "✅ Active" if has_active_vip(user_id) else "❌ Not Active"
-    text = f"💳 <b>PAYMENT & SUBSCRIPTION</b> ({BRAND_TAG})\n\n👑 Status: <b>{vip_line}</b>\n\n"
+    text = f"💳 <b>PAYMENT & SUBSCRIPTION</b> ({PROJECT_NAME} • {BRAND_TAG})\n\n👑 Status: <b>{vip_line}</b>\n\n"
     if not orders:
         text += "ℹ️ No payment records yet."
     else:
@@ -1215,7 +1283,7 @@ async def show_admin_stats(chat_id):
 
     await send_message(
         chat_id,
-        f"📊 <b>ADMIN ANALYTICS</b> ({BRAND_TAG})\n"
+        f"📊 <b>{PROJECT_NAME.upper()} ANALYTICS</b> ({BRAND_TAG})\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Registered Users: <b>{total_users}</b>\n"
         f"👑 Active VIP Members: <b>{active_vip}</b>\n"
@@ -1236,7 +1304,7 @@ async def show_admin_matches(chat_id):
         recent = db.execute("SELECT * FROM matches ORDER BY id DESC LIMIT 6").fetchall()
 
     text = (
-        f"⚽ <b>MATCH STUDIO</b> ({BRAND_TAG})\n"
+        f"⚽ <b>MATCH STUDIO — {PROJECT_NAME.upper()}</b> ({BRAND_TAG})\n"
         f"Queued: <b>{queued_free} FREE</b>  |  <b>{queued_vip} VIP</b>\n\n"
         "<b>Quick Add Command:</b>\n"
         "<code>/addmatch VIP | Arsenal vs Chelsea | Over 2.5 | 1.85 | 2026-11-14 | 19:45</code>\n\n"
@@ -1285,6 +1353,28 @@ async def show_admin_transactions(chat_id):
     await send_message(chat_id, text, {"inline_keyboard": rows})
 
 
+async def show_admin_channels_panel(chat_id):
+    auto_btn = get_setting("auto_channel_buttons", "1") == "1"
+    await send_message(
+        chat_id,
+        f"⚙️ <b>CHANNELS & API STATUS ({PROJECT_NAME})</b>\n\n"
+        f"• Main Channel: <code>{get_setting('main_channel_id', CHANNEL_ID)}</code>\n"
+        f"• VIP Channel: <code>{get_setting('vip_channel_id', VIP_CHANNEL_ID)}</code>\n"
+        f"• PayHero Channel ID: <code>{get_setting('payhero_channel_id', PAYHERO_CHANNEL_ID)}</code>\n"
+        f"• PayHero Auth: <code>****{PAYHERO_AUTH_TOKEN[-4:]}</code>\n"
+        f"• Referral Bonus Days: <code>{get_setting('referral_reward_days', '2')}</code>\n"
+        f"• Contact Admin URL: <code>{html_escape(get_setting('admin_contact_url'))}</code>\n"
+        f"• Auto-Attach Buttons on Manual Channel Posts: <b>{'ON ✅' if auto_btn else 'OFF 🔕'}</b>\n\n"
+        "Update settings with <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
+        {
+            "inline_keyboard": [
+                [{"text": f"Toggle Auto Channel Buttons ({'ON' if auto_btn else 'OFF'})", "callback_data": "admin:toggle_autobtn", "style": "primary"}],
+                [{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}],
+            ]
+        },
+    )
+
+
 # --------------------------------------------------
 # COMMAND & MESSAGE HANDLER
 # --------------------------------------------------
@@ -1316,7 +1406,13 @@ async def handle_message(message):
         if cmd == "/start":
             clear_session(user_id)
             if " vip" in text.lower():
-                await send_message(chat_id, f"👑 <b>SELECT YOUR VIP PACKAGE</b> ({BRAND_TAG})", plans_keyboard())
+                vip_odds_info = get_setting("vip_odds_info")
+                await send_message(
+                    chat_id,
+                    f"👑 <b>{PROJECT_NAME.upper()} — VIP PACKAGES</b> ({BRAND_TAG})\n\n"
+                    f"🎯 <b>VIP Odds:</b> {html_escape(vip_odds_info)}",
+                    plans_keyboard(),
+                )
             else:
                 await show_main_menu(chat_id, user_id)
             return
@@ -1334,7 +1430,45 @@ async def handle_message(message):
             if not is_admin(user_id):
                 await send_message(chat_id, "⛔ Unauthorized.")
                 return
-            await send_message(chat_id, f"⚡ <b>ADMIN DASHBOARD</b> ({BRAND_TAG})", admin_keyboard())
+            await send_message(chat_id, f"⚡ <b>{PROJECT_NAME.upper()} ADMIN</b> ({BRAND_TAG})", admin_keyboard())
+            return
+
+        if cmd == "/setvipodds" and is_admin(user_id):
+            value = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+            if not value:
+                await send_message(chat_id, "Usage: <code>/setvipodds 🔥 Today: 14.50 Total VIP Odds (4 Matches)</code>")
+                return
+            set_setting("vip_odds_info", value[:220])
+            await send_message(chat_id, f"✅ VIP Odds description updated:\n<b>{html_escape(value[:220])}</b>")
+            return
+
+        if cmd == "/postchannel" and is_admin(user_id):
+            body = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+            if not body:
+                await send_message(chat_id, "Usage: <code>/postchannel Today's VIP ticket is ready! Tap below.</code>")
+                return
+            await publish_custom_main_post(body)
+            await send_message(chat_id, "✅ Posted to Main Channel with <b>👑 JOIN VIP NOW</b> & <b>📞 Contact Admin</b> buttons!")
+            return
+
+        if cmd == "/addbutton" and is_admin(user_id):
+            value = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+            if "|" not in value:
+                await send_message(chat_id, "Usage: <code>/addbutton Website|https://example.com</code>")
+                return
+            label, url = [x.strip() for x in value.split("|", 1)]
+            if not label or not url.startswith("https://"):
+                await send_message(chat_id, "⚠️ Provide a label and valid HTTPS URL.")
+                return
+            with connect_db() as db:
+                db.execute("INSERT INTO custom_buttons(label,url) VALUES(?,?)", (label[:50], url))
+            await send_message(chat_id, "✅ Custom button added under /postvip.")
+            return
+
+        if cmd == "/removebuttons" and is_admin(user_id):
+            with connect_db() as db:
+                db.execute("DELETE FROM custom_buttons")
+            await send_message(chat_id, "🗑 Custom buttons cleared.")
             return
 
         if cmd == "/setprice" and is_admin(user_id):
@@ -1427,7 +1561,15 @@ async def handle_message(message):
 
         if cmd == "/setsetting" and is_admin(user_id):
             parts = text.split(None, 2)
-            allowed = {"main_channel_id", "vip_channel_id", "payhero_channel_id", "referral_reward_days"}
+            allowed = {
+                "main_channel_id",
+                "vip_channel_id",
+                "payhero_channel_id",
+                "referral_reward_days",
+                "vip_odds_info",
+                "admin_contact_url",
+                "auto_channel_buttons",
+            }
             if len(parts) != 3 or parts[1] not in allowed:
                 await send_message(chat_id, f"Usage: <code>/setsetting &lt;{'|'.join(sorted(allowed))}&gt; &lt;value&gt;</code>")
                 return
@@ -1479,11 +1621,31 @@ async def handle_message(message):
             sent = 0
             for t in targets:
                 try:
-                    await send_message(int(t["user_id"]), f"📣 <b>ANNOUNCEMENT ({BRAND_TAG})</b>\n\n{html_escape(text)}")
+                    await send_message(int(t["user_id"]), f"📣 <b>ANNOUNCEMENT ({PROJECT_NAME} • {BRAND_TAG})</b>\n\n{html_escape(text)}")
                     sent += 1
                 except Exception:
                     pass
             await send_message(chat_id, f"✅ Broadcast delivered to <b>{sent}</b> users.", admin_keyboard())
+            return
+
+        if state == "WAIT_VIP_ODDS" and is_admin(user_id):
+            clear_session(user_id)
+            set_setting("vip_odds_info", text[:220])
+            await send_message(
+                chat_id,
+                f"✅ <b>VIP Odds Description Updated!</b>\n\n🎯 {html_escape(text[:220])}",
+                admin_keyboard(),
+            )
+            return
+
+        if state == "WAIT_CHANNEL_POST" and is_admin(user_id):
+            clear_session(user_id)
+            await publish_custom_main_post(text)
+            await send_message(
+                chat_id,
+                "✅ Published to Main Channel with <b>👑 JOIN VIP NOW</b> and <b>📞 Contact Admin</b> buttons!",
+                admin_keyboard(),
+            )
             return
 
         if state == "WAIT_MATCH_INPUT" and is_admin(user_id):
@@ -1534,6 +1696,7 @@ async def handle_callback(query):
 
     if data == "menu:join_vip":
         await answer_callback(cid)
+        vip_odds_info = get_setting("vip_odds_info")
         with connect_db() as db:
             plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
         details = "\n".join(
@@ -1542,8 +1705,10 @@ async def handle_callback(query):
         )
         await send_message(
             chat_id,
-            f"👑 <b>JOIN VIP MEMBERSHIP</b> ({BRAND_TAG})\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n{details}\n\n"
+            f"👑 <b>{PROJECT_NAME.upper()} — VIP MEMBERSHIP</b> ({BRAND_TAG})\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 <b>What's on VIP:</b>\n{html_escape(vip_odds_info)}\n\n"
+            f"{details}\n\n"
             "👇 <b>Select a package below to continue:</b>",
             plans_keyboard(),
         )
@@ -1557,9 +1722,11 @@ async def handle_callback(query):
     if data == "menu:vip_tips":
         await answer_callback(cid)
         if not has_active_vip(user_id) and not is_admin(user_id):
+            vip_odds_info = get_setting("vip_odds_info")
             await send_message(
                 chat_id,
-                "🔒 <b>VIP PREDICTIONS LOCKED</b>\n\n"
+                f"🔒 <b>{PROJECT_NAME.upper()} VIP LOCKED</b>\n\n"
+                f"🎯 <b>VIP Odds:</b> {html_escape(vip_odds_info)}\n\n"
                 "Only active VIP subscribers can access VIP picks.\n"
                 "👇 Tap below to activate your VIP membership instantly:",
                 plans_keyboard(),
@@ -1598,7 +1765,7 @@ async def handle_callback(query):
         set_session(user_id, "WAIT_SUPPORT_MSG")
         await send_message(
             chat_id,
-            f"📞 <b>CONTACT ADMIN ({BRAND_TAG})</b>\n\n"
+            f"📞 <b>CONTACT ADMIN ({PROJECT_NAME} • {BRAND_TAG})</b>\n\n"
             f"Direct Telegram: {BRAND_TAG}\n"
             "Or type your message right now and I will deliver it to the admin.\n\n"
             "Send /cancel to go back.",
@@ -1609,7 +1776,7 @@ async def handle_callback(query):
         await answer_callback(cid)
         await send_message(
             chat_id,
-            f"ℹ️ <b>HOW IT WORKS ({BRAND_TAG})</b>\n"
+            f"ℹ️ <b>HOW {PROJECT_NAME.upper()} WORKS ({BRAND_TAG})</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "1️⃣ Tap <b>👑 JOIN VIP NOW</b> and choose your package.\n"
             "2️⃣ Select <b>M-Pesa STK Push</b> (instant) or Airtel/MTN.\n"
@@ -1710,7 +1877,7 @@ async def handle_callback(query):
         await answer_callback(cid)
 
         if action == "home":
-            await send_message(chat_id, f"⚡ <b>ADMIN DASHBOARD</b> ({BRAND_TAG})", admin_keyboard())
+            await send_message(chat_id, f"⚡ <b>{PROJECT_NAME.upper()} ADMIN</b> ({BRAND_TAG})", admin_keyboard())
         elif action == "stats":
             await show_admin_stats(chat_id)
         elif action == "matches":
@@ -1746,6 +1913,21 @@ async def handle_callback(query):
                 for p in plans
             ) + "\n\nChange with: <code>/setprice &lt;name&gt; &lt;amount&gt;</code>"
             await send_message(chat_id, txt, admin_keyboard())
+        elif action == "vip_odds":
+            set_session(user_id, "WAIT_VIP_ODDS")
+            current = get_setting("vip_odds_info")
+            await send_message(
+                chat_id,
+                f"🎯 <b>CURRENT VIP ODDS DESCRIPTION:</b>\n<i>{html_escape(current)}</i>\n\n"
+                "Send your new VIP odds description now (e.g. <code>🔥 Today's VIP: 15.80 Odds across 4 Sure Picks</code>), or /cancel:",
+            )
+        elif action == "post_channel":
+            set_session(user_id, "WAIT_CHANNEL_POST")
+            await send_message(
+                chat_id,
+                "📝 Type the message you want to post to your <b>Main Channel</b>.\n\n"
+                "The bot will automatically attach <b>👑 JOIN VIP NOW</b> and <b>📞 Contact Admin</b> buttons underneath it! (or /cancel)",
+            )
         elif action == "transactions":
             await show_admin_transactions(chat_id)
         elif action == "approve" and len(parts) == 3:
@@ -1773,17 +1955,11 @@ async def handle_callback(query):
             set_session(user_id, "WAIT_BROADCAST")
             await send_message(chat_id, "📣 Type the announcement to send to all subscribed users (or /cancel):")
         elif action == "channels":
-            await send_message(
-                chat_id,
-                "⚙️ <b>CHANNELS & API STATUS</b>\n\n"
-                f"• Main Channel: <code>{get_setting('main_channel_id', CHANNEL_ID)}</code>\n"
-                f"• VIP Channel: <code>{get_setting('vip_channel_id', VIP_CHANNEL_ID)}</code>\n"
-                f"• PayHero Channel ID: <code>{get_setting('payhero_channel_id', PAYHERO_CHANNEL_ID)}</code>\n"
-                f"• PayHero Auth: <code>****{PAYHERO_AUTH_TOKEN[-4:]}</code>\n"
-                f"• Referral Bonus Days: <code>{get_setting('referral_reward_days', '2')}</code>\n\n"
-                "Update with <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
-                admin_keyboard(),
-            )
+            await show_admin_channels_panel(chat_id)
+        elif action == "toggle_autobtn":
+            curr = get_setting("auto_channel_buttons", "1")
+            set_setting("auto_channel_buttons", "0" if curr == "1" else "1")
+            await show_admin_channels_panel(chat_id)
         elif action == "post":
             await publish_vip_post()
             await send_message(chat_id, "✅ VIP promotional banner published.", admin_keyboard())
@@ -1831,7 +2007,7 @@ async def background_tick():
         try:
             await send_message(
                 uid,
-                f"⏳ <b>VIP EXPIRY REMINDER</b> ({BRAND_TAG})\n\n"
+                f"⏳ <b>{PROJECT_NAME.upper()} EXPIRY REMINDER</b> ({BRAND_TAG})\n\n"
                 f"Your VIP expires on <b>{format_eat(m['expires_at'])}</b>. Renew now to keep access:",
                 plans_keyboard(),
             )
@@ -1859,7 +2035,7 @@ async def background_tick():
         try:
             await send_message(
                 uid,
-                f"⏰ <b>Your VIP membership has expired.</b> ({BRAND_TAG})\n\nTap below to renew immediately:",
+                f"⏰ <b>Your {PROJECT_NAME} membership has expired.</b> ({BRAND_TAG})\n\nTap below to renew immediately:",
                 plans_keyboard(),
             )
         except Exception:
@@ -1875,9 +2051,9 @@ async def background_worker():
             await telegram("setWebhook", {
                 "url": PUBLIC_URL.rstrip("/") + "/telegram",
                 "secret_token": WEBHOOK_SECRET,
-                "allowed_updates": ["message", "callback_query"],
+                "allowed_updates": ["message", "callback_query", "channel_post"],
             })
-            log.info("John Tipster VIP platform started as @%s", bot_username)
+            log.info("%s platform started as @%s", PROJECT_NAME, bot_username)
             break
         except Exception:
             log.exception("Telegram webhook setup failed (attempt %s/5)", attempt + 1)
@@ -1915,7 +2091,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def home():
-    return {"status": "John Tipster VIP Platform running", "brand": BRAND_TAG}
+    return {"status": f"{PROJECT_NAME} Platform running", "brand": BRAND_TAG}
 
 
 @app.get("/health")
@@ -1927,7 +2103,7 @@ async def health():
 async def api_packages():
     with connect_db() as db:
         plans = db.execute("SELECT name,title,price,days,benefits,is_lifetime FROM plans ORDER BY price").fetchall()
-    return {"packages": [dict(p) for p in plans]}
+    return {"vip_odds_info": get_setting("vip_odds_info"), "packages": [dict(p) for p in plans]}
 
 
 @app.get("/api/predictions")
@@ -1940,6 +2116,7 @@ async def api_predictions():
         lost = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='LOST'").fetchone()["n"]
     decided = won + lost
     return {
+        "project": PROJECT_NAME,
         "brand": BRAND_TAG,
         "win_rate": round(won / decided * 100, 1) if decided else None,
         "free_predictions": [dict(r) for r in free],
@@ -1958,32 +2135,38 @@ async def api_account(user_id: int, x_api_key: str = Header(default="")):
 @app.get("/app", response_class=HTMLResponse)
 async def mini_app():
     bot_link = f"https://t.me/{bot_username}?start=vip" if bot_username else "#"
+    contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>John Tipster VIP • {BRAND_TAG}</title>
+<title>{PROJECT_NAME} • {BRAND_TAG}</title>
 <style>
   body{{margin:0;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#05060c,#0b1126,#1b0b33);color:#f8fafc;min-height:100vh;padding:16px}}
   .top-banner{{position:fixed;top:12px;right:12px;z-index:99;background:linear-gradient(135deg,#f59e0b,#7c3aed);color:#fff;font-weight:800;padding:10px 16px;border-radius:999px;text-decoration:none;box-shadow:0 0 18px rgba(245,158,11,.65),0 0 28px rgba(124,58,237,.6);font-size:13px}}
   .hero{{margin-top:46px;background:rgba(15,23,42,.85);border:1px solid rgba(124,58,237,.5);border-radius:18px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)}}
   h1{{margin:0 0 6px;font-size:22px;background:linear-gradient(90deg,#f59e0b,#10b981,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
+  .odds-box{{margin-top:12px;padding:12px;border-radius:12px;background:linear-gradient(90deg,rgba(245,158,11,.15),rgba(124,58,237,.18));border:1px solid rgba(245,158,11,.45);font-size:13px;color:#fde68a}}
   .card{{background:#0d142b;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-top:12px}}
   .pill{{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;background:#10b98122;color:#10b981;border:1px solid #10b98155}}
-  .btn{{display:block;text-align:center;margin-top:14px;padding:12px;border-radius:12px;background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-weight:700;text-decoration:none}}
+  .btn{{display:block;text-align:center;margin-top:12px;padding:12px;border-radius:12px;background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-weight:700;text-decoration:none}}
+  .btn-contact{{background:linear-gradient(90deg,#059669,#10b981)}}
 </style>
 </head>
 <body>
   <a class="top-banner" href="{bot_link}">👑 JOIN VIP NOW</a>
   <div class="hero">
-    <h1>JOHN TIPSTER VIP</h1>
+    <h1>{PROJECT_NAME.upper()}</h1>
     <div style="color:#94a3b8;font-size:13px">Luxury Football Predictions Platform • {BRAND_TAG}</div>
+    <div id="odds-banner" class="odds-box">🎯 Loading VIP odds info...</div>
   </div>
   <div id="content" class="card">Loading live predictions & VIP packages...</div>
   <a class="btn" href="{bot_link}">⚡ Activate VIP via M-Pesa / Mobile Money</a>
+  <a class="btn btn-contact" href="{contact_url}">📞 Contact Admin ({BRAND_TAG})</a>
 <script>
 Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages').then(r=>r.json())])
 .then(([p,pkg])=>{{
+  document.getElementById('odds-banner').innerHTML = '🎯 <b>VIP Odds:</b> ' + (pkg.vip_odds_info || '');
   let h=`<div class="pill">Verified Win Rate: ${{p.win_rate ?? 'Tracking'}}%</div><h3>⚽ Latest Free Picks</h3>`;
   if(!p.free_predictions.length) h+=`<p style="color:#94a3b8">No free picks posted yet.</p>`;
   p.free_predictions.forEach(m=>{{h+=`<div class="card"><b>${{m.match_name}}</b><br>🎯 ${{m.tip}} | 📈 ${{m.odds}} | ${{m.result}}</div>`;}});
@@ -2007,6 +2190,8 @@ async def telegram_webhook(request: Request):
             await handle_message(update["message"])
         elif "callback_query" in update:
             await handle_callback(update["callback_query"])
+        elif "channel_post" in update:
+            await handle_channel_post(update["channel_post"])
     except Exception:
         log.exception("Telegram update processing failed")
     return {"ok": True}
