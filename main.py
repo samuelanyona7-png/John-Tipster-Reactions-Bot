@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -7,6 +6,8 @@ import asyncio
 import secrets
 import sqlite3
 import logging
+from contextlib import contextmanager
+from html import escape as html_escape
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -53,7 +54,7 @@ def check_settings():
         "WEBHOOK_SECRET": WEBHOOK_SECRET,
         "PAYHERO_AUTH_TOKEN": PAYHERO_AUTH_TOKEN,
         "PAYHERO_CHANNEL_ID": PAYHERO_CHANNEL_ID,
-        "RENDER_EXTERNAL_URL": PUBLIC_URL,
+        "PUBLIC_URL / RENDER_EXTERNAL_URL": PUBLIC_URL,
     }
 
     missing = [k for k, v in settings.items() if not v]
@@ -63,10 +64,10 @@ def check_settings():
             "Missing environment variables: " + ", ".join(missing)
         )
 
-    if not ADMIN_USER_ID.isdigit():
+    if not str(ADMIN_USER_ID).isdigit():
         raise RuntimeError("ADMIN_USER_ID must be a numeric Telegram user ID")
 
-    if not PAYHERO_CHANNEL_ID.isdigit():
+    if not str(PAYHERO_CHANNEL_ID).isdigit():
         raise RuntimeError("PAYHERO_CHANNEL_ID must be numeric")
 
 
@@ -74,10 +75,26 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+@contextmanager
 def connect_db():
+    """
+    Proper SQLite context manager.
+
+    NOTE: sqlite3.Connection used with `with con:` only commits/rolls back —
+    it does NOT close the connection. Wrapping it in a generator-based
+    contextmanager guarantees the connection is always closed, preventing
+    file-descriptor leaks under load.
+    """
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def init_db():
@@ -168,6 +185,8 @@ async def send_message(chat_id, text, keyboard=None):
     data = {
         "chat_id": chat_id,
         "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
     }
 
     if keyboard:
@@ -199,8 +218,9 @@ def plans_keyboard():
         price = plan["price"]
 
         rows.append([{
-            "text": f"👑 {name.title()} VIP - KES {price}",
-            "callback_data": f"plan:{name}"
+            "text": f"👑 {name.title()} VIP — KES {price}",
+            "callback_data": f"plan:{name}",
+            "style": "primary",   # Bot API 9.0+: blue button
         }])
 
     return {"inline_keyboard": rows}
@@ -218,7 +238,11 @@ def admin_keyboard():
                 {"text": "🧾 Payments", "callback_data": "admin:payments"}
             ],
             [
-                {"text": "📢 Publish VIP Advert", "callback_data": "admin:post"}
+                {
+                    "text": "📢 Publish VIP Advert",
+                    "callback_data": "admin:post",
+                    "style": "success",
+                }
             ],
             [
                 {"text": "🔘 Button Commands", "callback_data": "admin:buttons"}
@@ -273,7 +297,7 @@ async def start_payment(user_id, plan_name, phone):
     plan = get_plan(plan_name)
 
     if not plan:
-        await send_message(user_id, "That VIP plan is unavailable.")
+        await send_message(user_id, "⚠️ That VIP plan is unavailable.")
         return
 
     external_ref = "JT" + secrets.token_hex(8).upper()
@@ -324,17 +348,28 @@ async def start_payment(user_id, plan_name, phone):
 
             await send_message(
                 user_id,
-                "Payment request could not be started. Please try again later."
+                "❌ <b>Payment request could not be started.</b>\n\n"
+                "Please try again later or contact the administrator."
             )
             return
 
         if not result.get("success"):
-            raise RuntimeError(str(result))
+            with connect_db() as con:
+                con.execute(
+                    "UPDATE orders SET status='FAILED' WHERE external_ref=?",
+                    (external_ref,)
+                )
+            raise RuntimeError(f"PayHero rejected payment: {result}")
 
         reference = result.get("reference")
         checkout_id = result.get("CheckoutRequestID")
 
         if not reference:
+            with connect_db() as con:
+                con.execute(
+                    "UPDATE orders SET status='FAILED' WHERE external_ref=?",
+                    (external_ref,)
+                )
             raise RuntimeError("PayHero did not return a transaction reference")
 
         with connect_db() as con:
@@ -346,12 +381,12 @@ async def start_payment(user_id, plan_name, phone):
 
         await send_message(
             user_id,
-            "📲 M-Pesa STK Push sent!\n\n"
-            f"Plan: {plan_name.title()} VIP\n"
-            f"Amount: KES {amount}\n"
-            f"Phone: {phone}\n\n"
-            "Enter your M-Pesa PIN on your phone to complete payment.\n"
-            "Your VIP access will be sent after payment is verified."
+            "📲 <b>M-Pesa STK Push sent!</b>\n\n"
+            f"💼 Plan: <b>{html_escape(plan_name.title())} VIP</b>\n"
+            f"💰 Amount: <b>KES {amount}</b>\n"
+            f"📞 Phone: <code>{html_escape(phone)}</code>\n\n"
+            "🔐 Enter your <b>M-Pesa PIN</b> on your phone to complete payment.\n\n"
+            "✅ Your VIP access will be sent automatically once payment is verified."
         )
 
     except Exception:
@@ -359,7 +394,8 @@ async def start_payment(user_id, plan_name, phone):
 
         await send_message(
             user_id,
-            "We could not start your payment. Please contact the administrator."
+            "⚠️ We could not start your payment.\n\n"
+            "Please contact the administrator."
         )
 
 
@@ -427,15 +463,16 @@ async def give_vip_access(user_id, plan_name):
 
         await send_message(
             user_id,
-            "🎉 PAYMENT CONFIRMED!\n\n"
-            "Welcome to JOHN TIPSTER VIP.\n\n"
-            f"Your plan: {plan_name.title()} VIP\n"
-            f"Expires: {expiry.strftime('%d %b %Y %H:%M UTC')}\n\n"
-            "Tap your private invitation link below to join:",
+            "🎉 <b>PAYMENT CONFIRMED!</b>\n\n"
+            "👑 <b>Welcome to JOHN TIPSTER VIP</b>\n\n"
+            f"💼 Plan: <b>{html_escape(plan_name.title())} VIP</b>\n"
+            f"📅 Expires: <b>{expiry.strftime('%d %b %Y %H:%M UTC')}</b>\n\n"
+            "👇 Tap your private invitation link below to join:",
             {
                 "inline_keyboard": [[{
                     "text": "👑 JOIN VIP CHANNEL",
-                    "url": invite["invite_link"]
+                    "url": invite["invite_link"],
+                    "style": "primary",
                 }]]
             }
         )
@@ -445,14 +482,16 @@ async def give_vip_access(user_id, plan_name):
 
         await send_message(
             ADMIN_USER_ID,
-            f"Payment confirmed for Telegram user {user_id}, "
-            "but VIP invitation creation failed. Please check bot permissions."
+            "⚠️ <b>VIP invite creation failed</b>\n\n"
+            f"Payment confirmed for Telegram user <code>{user_id}</code>, "
+            "but the bot could not create an invite link.\n\n"
+            "Please check bot admin permissions in the VIP channel."
         )
 
         await send_message(
             user_id,
-            "Your payment is confirmed. Please contact the administrator "
-            "for your VIP invitation."
+            "✅ Your payment is confirmed.\n\n"
+            "Please contact the administrator for your VIP invitation."
         )
 
 
@@ -523,11 +562,11 @@ async def process_payhero_callback(payload):
 
     await send_message(
         ADMIN_USER_ID,
-        "✅ NEW VIP PAYMENT\n\n"
-        f"Customer Telegram ID: {order['user_id']}\n"
-        f"Plan: {order['plan']}\n"
-        f"Amount: KES {order['amount']}\n"
-        f"Reference: {external_ref}"
+        "✅ <b>NEW VIP PAYMENT</b>\n\n"
+        f"🆔 Customer: <code>{order['user_id']}</code>\n"
+        f"💼 Plan: <b>{html_escape(order['plan'].title())}</b>\n"
+        f"💰 Amount: <b>KES {order['amount']}</b>\n"
+        f"🔗 Ref: <code>{html_escape(external_ref)}</code>"
     )
 
 
@@ -541,10 +580,13 @@ async def publish_vip_post():
 
     join_url = f"https://t.me/{username}?start=vip"
 
+    # `style: primary` requires Bot API 9.0+ (renders blue on modern
+    # Telegram clients; safely ignored by older clients).
     keyboard = {
         "inline_keyboard": [[{
             "text": "👑 JOIN VIP NOW",
-            "url": join_url
+            "url": join_url,
+            "style": "primary",
         }]]
     }
 
@@ -561,14 +603,15 @@ async def publish_vip_post():
 
     message = await telegram("sendMessage", {
         "chat_id": CHANNEL_ID,
+        "parse_mode": "HTML",
         "text": (
-            "👑 JOHN TIPSTER VIP PREDICTIONS\n\n"
-            "Want access to our premium football predictions?\n\n"
-            "Choose your VIP membership plan and pay securely "
-            "through M-Pesa.\n\n"
-            "Your membership invitation is sent automatically "
+            "👑 <b>JOHN TIPSTER VIP PREDICTIONS</b>\n\n"
+            "⚽ Want access to our <b>premium football predictions</b>?\n\n"
+            "💎 Choose your VIP membership plan and pay securely through "
+            "<b>M-Pesa</b>.\n\n"
+            "🚀 Your membership invitation is sent <b>automatically</b> "
             "after successful payment.\n\n"
-            "👇 TAP BELOW TO JOIN VIP"
+            "👇 <b>TAP BELOW TO JOIN VIP</b>"
         ),
         "reply_markup": keyboard
     })
@@ -595,15 +638,18 @@ async def show_prices(chat_id):
             "SELECT * FROM plans ORDER BY price"
         ).fetchall()
 
-    text = "💰 CURRENT VIP PRICES\n\n"
+    text = "💰 <b>CURRENT VIP PRICES</b>\n\n"
 
     for p in plans:
-        text += f"{p['name'].title()}: KES {p['price']}\n"
+        text += (
+            f"• <b>{html_escape(p['name'].title())}</b> — "
+            f"KES {p['price']}\n"
+        )
 
-    text += "\nChange prices with:\n"
-    text += "/setprice daily 100\n"
-    text += "/setprice weekly 300\n"
-    text += "/setprice monthly 1000"
+    text += "\n<i>Change prices with:</i>\n"
+    text += "<code>/setprice daily 100</code>\n"
+    text += "<code>/setprice weekly 300</code>\n"
+    text += "<code>/setprice monthly 1000</code>"
 
     await send_message(chat_id, text)
 
@@ -628,11 +674,11 @@ async def show_stats(chat_id):
 
     await send_message(
         chat_id,
-        "📊 JOHN TIPSTER VIP STATISTICS\n\n"
-        f"Active VIP members: {active}\n"
-        f"Successful payments: {paid}\n"
-        f"Pending payments: {pending}\n"
-        f"Recorded revenue: KES {revenue}"
+        "📊 <b>JOHN TIPSTER VIP STATISTICS</b>\n\n"
+        f"👥 Active VIP members: <b>{active}</b>\n"
+        f"✅ Successful payments: <b>{paid}</b>\n"
+        f"⏳ Pending payments: <b>{pending}</b>\n"
+        f"💰 Recorded revenue: <b>KES {revenue}</b>"
     )
 
 
@@ -646,16 +692,16 @@ async def show_members(chat_id):
         """).fetchall()
 
     if not members:
-        await send_message(chat_id, "No active VIP members yet.")
+        await send_message(chat_id, "ℹ️ No active VIP members yet.")
         return
 
-    text = "👥 ACTIVE VIP MEMBERS\n\n"
+    text = "👥 <b>ACTIVE VIP MEMBERS</b>\n\n"
 
     for m in members:
         text += (
-            f"ID: {m['user_id']}\n"
-            f"Plan: {m['plan']}\n"
-            f"Expires: {m['expires_at']}\n\n"
+            f"🆔 <code>{m['user_id']}</code>\n"
+            f"💼 Plan: <b>{html_escape(m['plan'].title())}</b>\n"
+            f"📅 Expires: {m['expires_at']}\n\n"
         )
 
     await send_message(chat_id, text)
@@ -670,17 +716,17 @@ async def show_payments(chat_id):
         """).fetchall()
 
     if not payments:
-        await send_message(chat_id, "No payments recorded yet.")
+        await send_message(chat_id, "ℹ️ No payments recorded yet.")
         return
 
-    text = "🧾 RECENT PAYMENTS\n\n"
+    text = "🧾 <b>RECENT PAYMENTS</b>\n\n"
 
     for p in payments:
         text += (
-            f"{p['plan'].title()} - KES {p['amount']}\n"
-            f"Status: {p['status']}\n"
-            f"Customer: {p['user_id']}\n"
-            f"Ref: {p['external_ref']}\n\n"
+            f"💼 <b>{html_escape(p['plan'].title())}</b> — KES {p['amount']}\n"
+            f"📌 Status: <b>{html_escape(p['status'])}</b>\n"
+            f"🆔 Customer: <code>{p['user_id']}</code>\n"
+            f"🔗 Ref: <code>{html_escape(p['external_ref'])}</code>\n\n"
         )
 
     await send_message(chat_id, text)
@@ -689,6 +735,20 @@ async def show_payments(chat_id):
 # --------------------------------------------------
 # COMMAND HANDLING
 # --------------------------------------------------
+
+HELP_TEXT = (
+    "ℹ️ <b>JOHN TIPSTER VIP — HELP</b>\n\n"
+    "▶️ /start — View VIP plans & subscribe\n"
+    "🛑 /cancel — Cancel a pending payment\n\n"
+    "<i>Admin commands:</i>\n"
+    "🔐 /admin — Open the admin panel\n"
+    "💰 /setprice &lt;plan&gt; &lt;amount&gt;\n"
+    "➕ /addbutton Label|https://url\n"
+    "🗑 /removebuttons\n"
+    "📢 /postvip\n"
+    "📊 /stats · 👥 /members · 🧾 /payments"
+)
+
 
 async def handle_message(message):
     user = message.get("from", {})
@@ -699,15 +759,22 @@ async def handle_message(message):
     if not user_id or not chat_id:
         return
 
+    # ---- Commands (handled before phone-number entry) ----
+
     if text.startswith("/start"):
         await send_message(
             chat_id,
-            "👑 WELCOME TO JOHN TIPSTER VIP!\n\n"
-            "Choose your membership plan below.\n"
-            "After payment is confirmed, your VIP invitation "
-            "will be sent automatically.",
+            "👑 <b>WELCOME TO JOHN TIPSTER VIP!</b>\n\n"
+            "🌟 <i>Premium football predictions, delivered privately.</i>\n\n"
+            "Choose your membership plan below 👇\n\n"
+            "🔐 After payment is confirmed, your VIP invitation is sent "
+            "to you automatically.",
             plans_keyboard()
         )
+        return
+
+    if text.startswith("/help"):
+        await send_message(chat_id, HELP_TEXT)
         return
 
     if text.startswith("/cancel"):
@@ -717,26 +784,26 @@ async def handle_message(message):
                 (user_id,)
             )
 
-        await send_message(chat_id, "Payment process cancelled.")
+        await send_message(chat_id, "🛑 Payment process cancelled.")
         return
 
     if text.startswith("/admin"):
         if not is_admin(user_id):
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
             return
 
         await send_message(
             chat_id,
-            "👑 JOHN TIPSTER ADMIN PANEL\n\n"
+            "👑 <b>JOHN TIPSTER ADMIN PANEL</b>\n\n"
             "Choose an action below.\n\n"
-            "You can also use commands such as /setprice.",
+            "<i>You can also use commands such as</i> <code>/setprice</code>.",
             admin_keyboard()
         )
         return
 
     if text.startswith("/setprice"):
         if not is_admin(user_id):
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
             return
 
         parts = text.split()
@@ -744,7 +811,7 @@ async def handle_message(message):
         if len(parts) != 3:
             await send_message(
                 chat_id,
-                "Usage: /setprice daily 100\n"
+                "Usage: <code>/setprice daily 100</code>\n"
                 "Available plans: daily, weekly, monthly"
             )
             return
@@ -754,11 +821,11 @@ async def handle_message(message):
         try:
             price = int(parts[2])
         except ValueError:
-            await send_message(chat_id, "Enter a whole-number KES price.")
+            await send_message(chat_id, "⚠️ Enter a whole-number KES price.")
             return
 
         if plan_name not in ("daily", "weekly", "monthly") or price < 1:
-            await send_message(chat_id, "Invalid plan or price.")
+            await send_message(chat_id, "⚠️ Invalid plan or price.")
             return
 
         with connect_db() as con:
@@ -769,13 +836,14 @@ async def handle_message(message):
 
         await send_message(
             chat_id,
-            f"✅ {plan_name.title()} VIP price updated to KES {price}."
+            f"✅ <b>{html_escape(plan_name.title())} VIP</b> price updated to "
+            f"<b>KES {price}</b>."
         )
         return
 
     if text.startswith("/addbutton"):
         if not is_admin(user_id):
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
             return
 
         value = text[len("/addbutton"):].strip()
@@ -783,7 +851,7 @@ async def handle_message(message):
         if "|" not in value:
             await send_message(
                 chat_id,
-                "Usage:\n/addbutton Website|https://example.com"
+                "Usage:\n<code>/addbutton Website|https://example.com</code>"
             )
             return
 
@@ -792,7 +860,7 @@ async def handle_message(message):
         if not label or not url.startswith("https://"):
             await send_message(
                 chat_id,
-                "Please provide a button label and a valid HTTPS URL."
+                "⚠️ Please provide a button label and a valid HTTPS URL."
             )
             return
 
@@ -804,35 +872,39 @@ async def handle_message(message):
 
         await send_message(
             chat_id,
-            "✅ Button added. Use /postvip to publish the updated advert."
+            "✅ Button added.\n\nUse /postvip to publish the updated advert."
         )
         return
 
     if text.startswith("/removebuttons"):
         if not is_admin(user_id):
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
             return
 
         with connect_db() as con:
             con.execute("DELETE FROM custom_buttons")
 
-        await send_message(chat_id, "All custom buttons removed.")
+        await send_message(chat_id, "🗑 All custom buttons removed.")
         return
 
     if text.startswith("/postvip"):
         if not is_admin(user_id):
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
             return
 
         try:
             await publish_vip_post()
-            await send_message(chat_id, "✅ VIP advert published to your channel.")
+            await send_message(
+                chat_id,
+                "✅ VIP advert published to your channel."
+            )
         except Exception:
             log.exception("Could not publish VIP post")
             await send_message(
                 chat_id,
-                "Could not publish. Check that the bot is an admin "
-                "with permission to post in your channel."
+                "⚠️ Could not publish.\n\n"
+                "Check that the bot is an admin with permission to post in "
+                "your channel."
             )
         return
 
@@ -840,24 +912,32 @@ async def handle_message(message):
         if is_admin(user_id):
             await show_stats(chat_id)
         else:
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
         return
 
     if text.startswith("/members"):
         if is_admin(user_id):
             await show_members(chat_id)
         else:
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
         return
 
     if text.startswith("/payments"):
         if is_admin(user_id):
             await show_payments(chat_id)
         else:
-            await send_message(chat_id, "You are not authorized.")
+            await send_message(chat_id, "⛔ You are not authorized.")
         return
 
-    # If the user is entering a phone number for payment:
+    if text.startswith("/"):
+        await send_message(
+            chat_id,
+            "❓ Unknown command.\n\nUse /start to see VIP plans or /help for help."
+        )
+        return
+
+    # ---- Non-command text: treat as M-Pesa phone entry if a session exists ----
+
     with connect_db() as con:
         session = con.execute(
             "SELECT * FROM sessions WHERE user_id=?",
@@ -870,7 +950,9 @@ async def handle_message(message):
         if not phone:
             await send_message(
                 chat_id,
-                "Enter a valid Kenyan number, for example 0712345678."
+                "⚠️ Enter a valid Kenyan number.\n\n"
+                "Example: <code>0712345678</code>\n\n"
+                "Send /cancel to stop."
             )
             return
 
@@ -883,11 +965,11 @@ async def handle_message(message):
         await start_payment(user_id, session["plan"], phone)
         return
 
-    if text.startswith("/"):
-        await send_message(
-            chat_id,
-            "Use /start to see VIP plans or /help for instructions."
-        )
+    # No session, no command — prompt the user
+    await send_message(
+        chat_id,
+        "👋 Send /start to see VIP plans or /help for instructions."
+    )
 
 
 # --------------------------------------------------
@@ -898,7 +980,7 @@ async def handle_callback(query):
     callback_id = query["id"]
     user_id = query["from"]["id"]
     data = query.get("data", "")
-    chat_id = query.get("message", {}).get("chat", {}).get("id")
+    chat_id = query.get("message", {}).get("chat", {}).get("id") or user_id
 
     if data.startswith("plan:"):
         plan_name = data.split(":", 1)[1]
@@ -918,9 +1000,9 @@ async def handle_callback(query):
 
         await send_message(
             user_id,
-            f"You selected {plan_name.title()} VIP.\n\n"
-            "Enter your Kenyan M-Pesa phone number.\n"
-            "Example: 0712345678\n\n"
+            f"✅ <b>Plan selected:</b> {html_escape(plan_name.title())} VIP\n\n"
+            "📱 Enter your <b>Kenyan M-Pesa phone number</b>.\n\n"
+            "Example: <code>0712345678</code>\n\n"
             "Send /cancel to stop."
         )
         return
@@ -948,21 +1030,24 @@ async def handle_callback(query):
         elif action == "post":
             try:
                 await publish_vip_post()
-                await send_message(chat_id, "VIP advert published.")
+                await send_message(chat_id, "✅ VIP advert published.")
             except Exception:
                 log.exception("Admin post failed")
-                await send_message(chat_id, "Could not publish the VIP advert.")
+                await send_message(
+                    chat_id,
+                    "⚠️ Could not publish the VIP advert."
+                )
 
         elif action == "buttons":
             await send_message(
                 chat_id,
-                "🔘 BUTTON MANAGEMENT\n\n"
-                "Add a button:\n"
-                "/addbutton Website|https://example.com\n\n"
-                "Remove all custom buttons:\n"
-                "/removebuttons\n\n"
-                "Publish updated buttons:\n"
-                "/postvip"
+                "🔘 <b>BUTTON MANAGEMENT</b>\n\n"
+                "<b>Add a button:</b>\n"
+                "<code>/addbutton Website|https://example.com</code>\n\n"
+                "<b>Remove all custom buttons:</b>\n"
+                "<code>/removebuttons</code>\n\n"
+                "<b>Publish updated buttons:</b>\n"
+                "<code>/postvip</code>"
             )
         return
 
@@ -983,6 +1068,9 @@ async def expire_members():
     for member in expired:
         user_id = member["user_id"]
 
+        # Try to remove from the VIP channel — but a Telegram failure
+        # (e.g. user already left) must NOT prevent us from marking
+        # the subscription as EXPIRED, otherwise we retry forever.
         try:
             await telegram("banChatMember", {
                 "chat_id": VIP_CHANNEL_ID,
@@ -994,23 +1082,28 @@ async def expire_members():
                 "user_id": user_id,
                 "only_if_banned": True
             })
-
-            with connect_db() as con:
-                con.execute(
-                    "UPDATE subscriptions SET status='EXPIRED' WHERE user_id=?",
-                    (user_id,)
-                )
-
-            await send_message(
-                user_id,
-                "Your John Tipster VIP subscription has expired. "
-                "Use /start to renew your membership."
+        except Exception:
+            log.exception(
+                "Could not remove expired user %s from VIP channel", user_id
             )
 
-            log.info("Expired VIP member %s", user_id)
+        with connect_db() as con:
+            con.execute(
+                "UPDATE subscriptions SET status='EXPIRED' WHERE user_id=?",
+                (user_id,)
+            )
 
+        try:
+            await send_message(
+                user_id,
+                "⏰ <b>Your JOHN TIPSTER VIP subscription has expired.</b>\n\n"
+                "Use /start to renew your membership and keep getting "
+                "our winning tips. 🎯"
+            )
         except Exception:
-            log.exception("Could not remove expired member %s", user_id)
+            log.exception("Could not notify expired user %s", user_id)
+
+        log.info("Expired VIP member %s", user_id)
 
 
 async def expiry_worker():
