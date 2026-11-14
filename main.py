@@ -28,19 +28,24 @@ log = logging.getLogger("john-tipster-vip")
 
 BRAND_TAG = "@isla_olivia0"
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-VIP_CHANNEL_ID = os.getenv("VIP_CHANNEL_ID")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
-PAYHERO_AUTH_TOKEN = os.getenv("PAYHERO_AUTH_TOKEN")
-PAYHERO_CHANNEL_ID = os.getenv("PAYHERO_CHANNEL_ID")
+def env_str(name, default=""):
+    return (os.getenv(name) or default).strip()
 
-PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("PUBLIC_URL")
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-DB_PATH = os.getenv("DB_PATH", "john_tipster.db")
-WEBSITE_API_KEY = os.getenv("WEBSITE_API_KEY", "")
+
+BOT_TOKEN = env_str("TELEGRAM_BOT_TOKEN")
+ADMIN_USER_ID = env_str("ADMIN_USER_ID")
+CHANNEL_ID = env_str("CHANNEL_ID")
+VIP_CHANNEL_ID = env_str("VIP_CHANNEL_ID")
+WEBHOOK_SECRET = env_str("WEBHOOK_SECRET")
+
+PAYHERO_AUTH_TOKEN = env_str("PAYHERO_AUTH_TOKEN")
+PAYHERO_CHANNEL_ID = env_str("PAYHERO_CHANNEL_ID")
+
+PUBLIC_URL = env_str("RENDER_EXTERNAL_URL") or env_str("PUBLIC_URL")
+DATABASE_URL = env_str("DATABASE_URL")
+DB_PATH = env_str("DB_PATH", "john_tipster.db")
+WEBSITE_API_KEY = env_str("WEBSITE_API_KEY")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
@@ -68,26 +73,30 @@ def check_settings():
     if missing:
         raise RuntimeError("Missing environment variables: " + ", ".join(missing))
 
-    if not str(ADMIN_USER_ID).isdigit():
+    if not ADMIN_USER_ID.isdigit():
         raise RuntimeError("ADMIN_USER_ID must be a numeric Telegram user ID")
-    if not str(PAYHERO_CHANNEL_ID).isdigit():
+    if not PAYHERO_CHANNEL_ID.isdigit():
         raise RuntimeError("PAYHERO_CHANNEL_ID must be numeric")
     if USE_POSTGRES and psycopg2 is None:
-        raise RuntimeError("DATABASE_URL is set, please add psycopg2-binary to requirements.txt")
+        raise RuntimeError("DATABASE_URL is set; add psycopg2-binary to requirements.txt")
 
 
 def utcnow():
     return datetime.now(timezone.utc)
 
 
-def format_eat(dt_or_iso):
+def parse_utc(dt_or_iso):
     if isinstance(dt_or_iso, str):
         dt = datetime.fromisoformat(dt_or_iso)
     else:
         dt = dt_or_iso
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(EAT).strftime("%d %b %Y, %I:%M %p EAT")
+    return dt
+
+
+def format_eat(dt_or_iso):
+    return parse_utc(dt_or_iso).astimezone(EAT).strftime("%d %b %Y, %I:%M %p EAT")
 
 
 # --------------------------------------------------
@@ -113,7 +122,7 @@ class DBConn:
 @contextmanager
 def connect_db():
     if USE_POSTGRES:
-        raw = psycopg2.connect(DATABASE_URL)
+        raw = psycopg2.connect(DATABASE_URL, connect_timeout=10)
     else:
         raw = sqlite3.connect(DB_PATH, timeout=30)
         raw.row_factory = sqlite3.Row
@@ -127,6 +136,15 @@ def connect_db():
         raise
     finally:
         raw.close()
+
+
+def ensure_column(db, table, column, definition):
+    if USE_POSTGRES:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
+    else:
+        cols = [r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in cols:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def init_db():
@@ -150,10 +168,10 @@ def init_db():
         db.execute("""
             CREATE TABLE IF NOT EXISTS plans (
                 name TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
                 price INTEGER NOT NULL,
                 days INTEGER NOT NULL,
-                benefits TEXT NOT NULL,
+                benefits TEXT NOT NULL DEFAULT '',
                 is_lifetime INTEGER NOT NULL DEFAULT 0
             )
         """)
@@ -165,6 +183,24 @@ def init_db():
                 payload TEXT NOT NULL DEFAULT '{}'
             )
         """)
+
+        # Migrate legacy sessions table if it has old `plan` column
+        if USE_POSTGRES:
+            has_old_sessions = db.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='sessions' AND column_name='plan'"
+            ).fetchone()
+        else:
+            has_old_sessions = "plan" in [r["name"] for r in db.execute("PRAGMA table_info(sessions)").fetchall()]
+
+        if has_old_sessions:
+            db.execute("DROP TABLE sessions")
+            db.execute("""
+                CREATE TABLE sessions (
+                    user_id BIGINT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}'
+                )
+            """)
 
         db.execute("""
             CREATE TABLE IF NOT EXISTS orders (
@@ -225,6 +261,15 @@ def init_db():
             )
         """)
 
+        # Safe migrations for pre-existing databases
+        ensure_column(db, "plans", "title", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "plans", "benefits", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "plans", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "orders", "provider", "TEXT NOT NULL DEFAULT 'mpesa'")
+        ensure_column(db, "orders", "mpesa_receipt", "TEXT")
+        ensure_column(db, "subscriptions", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "subscriptions", "reminded", "INTEGER NOT NULL DEFAULT 0")
+
         defaults_plans = [
             ("daily", "Daily VIP", 100, 1, "24 Hours full VIP access • High-confidence daily picks", 0),
             ("weekly", "Weekly VIP", 300, 7, "7 Days VIP access • Daily singles & multi-bets • Priority alerts", 0),
@@ -232,20 +277,24 @@ def init_db():
             ("premium", "Premium VIP", 2500, 90, "90 Days VIP access • All accumulator slips • Priority support", 0),
             ("lifetime", "Lifetime VIP", 10000, 36500, "Permanent VIP access • Never expires • Every future VIP pick", 1),
         ]
-        for row in defaults_plans:
+        for name, title, price, days, benefits, is_lt in defaults_plans:
             db.execute(
                 """
                 INSERT INTO plans(name,title,price,days,benefits,is_lifetime)
                 VALUES(?,?,?,?,?,?)
                 ON CONFLICT(name) DO NOTHING
                 """,
-                row,
+                (name, title, price, days, benefits, is_lt),
+            )
+            db.execute(
+                "UPDATE plans SET title=?, benefits=? WHERE name=? AND (title IS NULL OR title='')",
+                (title, benefits, name),
             )
 
         default_settings = {
-            "main_channel_id": str(CHANNEL_ID),
-            "vip_channel_id": str(VIP_CHANNEL_ID),
-            "payhero_channel_id": str(PAYHERO_CHANNEL_ID),
+            "main_channel_id": CHANNEL_ID,
+            "vip_channel_id": VIP_CHANNEL_ID,
+            "payhero_channel_id": PAYHERO_CHANNEL_ID,
             "referral_reward_days": "2",
         }
         for k, v in default_settings.items():
@@ -335,7 +384,7 @@ def has_active_vip(user_id):
         return False
     if sub["is_lifetime"]:
         return True
-    return datetime.fromisoformat(sub["expires_at"]) > utcnow()
+    return parse_utc(sub["expires_at"]) > utcnow()
 
 
 # --------------------------------------------------
@@ -414,8 +463,9 @@ def plans_keyboard():
     rows = []
     for p in plans:
         duration = "Lifetime" if p["is_lifetime"] else f"{p['days']}d"
+        title = p["title"] or f"{p['name'].title()} VIP"
         rows.append([{
-            "text": f"👑 {p['title']} ({duration}) — KES {p['price']}",
+            "text": f"👑 {title} ({duration}) — KES {p['price']}",
             "callback_data": f"plan:{p['name']}",
             "style": "primary",
         }])
@@ -491,7 +541,7 @@ def recent_stk_cooldown_remaining(user_id):
         ).fetchone()
     if not last:
         return 0
-    elapsed = (utcnow() - datetime.fromisoformat(last["created_at"])).total_seconds()
+    elapsed = (utcnow() - parse_utc(last["created_at"])).total_seconds()
     return max(0, int(STK_COOLDOWN_SECONDS - elapsed))
 
 
@@ -512,6 +562,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
     external_ref = "JT" + secrets.token_hex(8).upper()
     amount = int(plan["price"])
     ph_channel = int(get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID))
+    plan_title = plan["title"] or f"{plan_name.title()} VIP"
 
     with connect_db() as db:
         db.execute(
@@ -546,7 +597,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
             await send_message(
                 user_id,
                 "❌ <b>M-Pesa request could not be started.</b>\n\n"
-                "Please double-check your number or contact admin " + BRAND_TAG,
+                f"Please double-check your number or contact admin {BRAND_TAG}",
             )
             return
 
@@ -565,7 +616,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
         await send_message(
             user_id,
             "📲 <b>M-PESA STK PUSH SENT!</b>\n\n"
-            f"👑 Package: <b>{html_escape(plan['title'])}</b>\n"
+            f"👑 Package: <b>{html_escape(plan_title)}</b>\n"
             f"💰 Amount: <b>KES {amount}</b>\n"
             f"📞 Phone: <code>{html_escape(phone)}</code>\n\n"
             "🔐 Enter your <b>M-Pesa PIN</b> on your phone.\n"
@@ -582,7 +633,7 @@ async def start_mpesa_payment(user_id, plan_name, phone):
         mark_order_failed(external_ref)
         await send_message(
             user_id,
-            "⚠️ Could not start your payment right now. Please try again or contact " + BRAND_TAG,
+            f"⚠️ Could not start your payment right now. Please try again or contact {BRAND_TAG}",
         )
 
 
@@ -604,6 +655,7 @@ async def submit_manual_mobile_money(user_id, plan_name, provider, text_input):
     phone, txn_ref = parts[0][:30], parts[1][:50]
     external_ref = "MM" + secrets.token_hex(6).upper()
     amount = int(plan["price"])
+    plan_title = plan["title"] or f"{plan_name.title()} VIP"
 
     with connect_db() as db:
         db.execute(
@@ -618,7 +670,7 @@ async def submit_manual_mobile_money(user_id, plan_name, provider, text_input):
         user_id,
         "⏳ <b>PAYMENT SUBMITTED FOR VERIFICATION</b>\n\n"
         f"🏦 Provider: <b>{html_escape(provider.upper())}</b>\n"
-        f"👑 Package: <b>{html_escape(plan['title'])}</b> (KES {amount})\n"
+        f"👑 Package: <b>{html_escape(plan_title)}</b> (KES {amount})\n"
         f"🧾 Reference: <code>{html_escape(txn_ref)}</code>\n\n"
         "🔒 Our admin will verify this transaction ID directly and activate your VIP immediately.",
         {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]},
@@ -628,7 +680,7 @@ async def submit_manual_mobile_money(user_id, plan_name, provider, text_input):
         ADMIN_USER_ID,
         f"🔔 <b>NEW {html_escape(provider.upper())} PAYMENT REVIEW</b>\n\n"
         f"🆔 User: <code>{user_id}</code>\n"
-        f"👑 Plan: <b>{html_escape(plan['title'])}</b> — KES {amount}\n"
+        f"👑 Plan: <b>{html_escape(plan_title)}</b> — KES {amount}\n"
         f"📞 Phone: <code>{html_escape(phone)}</code>\n"
         f"🧾 Txn Ref: <code>{html_escape(txn_ref)}</code>\n"
         f"🔗 Order: <code>{external_ref}</code>",
@@ -666,7 +718,7 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
         if not plan:
             return
         days = int(plan["days"])
-        display_title = plan["title"]
+        display_title = plan["title"] or f"{plan_name.title()} VIP"
         is_lifetime = int(plan["is_lifetime"])
 
     with connect_db() as db:
@@ -677,7 +729,7 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
         expiry = datetime(2099, 12, 31, 23, 59, tzinfo=timezone.utc)
     else:
         if existing and existing["status"] == "ACTIVE" and not existing["is_lifetime"]:
-            start = max(now, datetime.fromisoformat(existing["expires_at"]))
+            start = max(now, parse_utc(existing["expires_at"]))
         else:
             start = now
         expiry = start + timedelta(days=days)
@@ -1032,13 +1084,9 @@ async def show_predictions_list(chat_id, tier):
 async def show_results_or_tickets(chat_id, only_won=False):
     with connect_db() as db:
         if only_won:
-            rows = db.execute(
-                "SELECT * FROM matches WHERE result='WON' ORDER BY id DESC LIMIT 12"
-            ).fetchall()
+            rows = db.execute("SELECT * FROM matches WHERE result='WON' ORDER BY id DESC LIMIT 12").fetchall()
         else:
-            rows = db.execute(
-                "SELECT * FROM matches WHERE result!='PENDING' ORDER BY id DESC LIMIT 12"
-            ).fetchall()
+            rows = db.execute("SELECT * FROM matches WHERE result!='PENDING' ORDER BY id DESC LIMIT 12").fetchall()
 
         won_count = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='WON'").fetchone()["n"]
         lost_count = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='LOST'").fetchone()["n"]
@@ -1082,7 +1130,7 @@ async def show_account(chat_id, user_id):
     else:
         vip_status = "❌ <b>INACTIVE</b>"
 
-    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}" if bot_username else "Unavailable"
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}" if bot_username else "Generating..."
     reward_days = get_setting("referral_reward_days", "2")
 
     n_free = "🔔 ON" if (not user or user["notify_free"]) else "🔕 OFF"
@@ -1158,12 +1206,11 @@ async def show_admin_stats(chat_id):
         pending_cnt = db.execute("SELECT COUNT(*) AS n FROM orders WHERE status IN ('PENDING','PENDING_REVIEW')").fetchone()["n"]
         failed_cnt = db.execute("SELECT COUNT(*) AS n FROM orders WHERE status='FAILED'").fetchone()["n"]
         total_rev = db.execute("SELECT COALESCE(SUM(amount),0) AS n FROM orders WHERE status='PAID'").fetchone()["n"]
-
         paid_orders = db.execute("SELECT amount, created_at FROM orders WHERE status='PAID'").fetchall()
 
     today_rev = 0
     for o in paid_orders:
-        if format_eat(o["created_at"]) and datetime.fromisoformat(o["created_at"]).astimezone(EAT).strftime("%Y-%m-%d") == today_eat:
+        if parse_utc(o["created_at"]).astimezone(EAT).strftime("%Y-%m-%d") == today_eat:
             today_rev += int(o["amount"])
 
     await send_message(
@@ -1196,9 +1243,7 @@ async def show_admin_matches(chat_id):
         "<b>Recent Matches (tap to update result/delete):</b>\n"
     )
     rows = [
-        [
-            {"text": "➕ Guided Add Match", "callback_data": "admin:add_match", "style": "primary"},
-        ],
+        [{"text": "➕ Guided Add Match", "callback_data": "admin:add_match", "style": "primary"}],
         [
             {"text": f"📢 Post Queued FREE ({queued_free})", "callback_data": "admin:pub_free", "style": "success"},
             {"text": f"💎 Post Queued VIP ({queued_vip})", "callback_data": "admin:pub_vip", "style": "success"},
@@ -1492,7 +1537,7 @@ async def handle_callback(query):
         with connect_db() as db:
             plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
         details = "\n".join(
-            f"👑 <b>{html_escape(p['title'])}</b> — <b>KES {p['price']}</b>\n<i>   {html_escape(p['benefits'])}</i>"
+            f"👑 <b>{html_escape(p['title'] or p['name'].title())}</b> — <b>KES {p['price']}</b>\n<i>   {html_escape(p['benefits'])}</i>"
             for p in plans
         )
         await send_message(
@@ -1593,10 +1638,11 @@ async def handle_callback(query):
             await answer_callback(cid, "Plan unavailable")
             return
         await answer_callback(cid)
+        plan_title = plan["title"] or f"{plan_name.title()} VIP"
         await send_message(
             chat_id,
             f"💳 <b>CHOOSE PAYMENT METHOD</b>\n\n"
-            f"👑 Package: <b>{html_escape(plan['title'])}</b>\n"
+            f"👑 Package: <b>{html_escape(plan_title)}</b>\n"
             f"💰 Price: <b>KES {plan['price']}</b>\n\n"
             "Select your mobile money provider:",
             {
@@ -1753,7 +1799,6 @@ async def background_tick():
     now_iso = now.isoformat()
     remind_cutoff = (now + timedelta(hours=12)).isoformat()
 
-    # 1. Scheduled match auto-publishing
     with connect_db() as db:
         due_free = db.execute(
             "SELECT id FROM matches WHERE tier='FREE' AND publish_status='SCHEDULED' AND scheduled_for <= ?",
@@ -1769,7 +1814,6 @@ async def background_tick():
     if due_vip:
         await publish_match_batch("VIP", [r["id"] for r in due_vip])
 
-    # 2. Pre-expiry reminders
     with connect_db() as db:
         to_remind = db.execute(
             """
@@ -1794,7 +1838,6 @@ async def background_tick():
         except Exception:
             pass
 
-    # 3. Expire & remove members
     with connect_db() as db:
         expired = db.execute(
             "SELECT * FROM subscriptions WHERE status='ACTIVE' AND is_lifetime=0 AND expires_at <= ?",
@@ -1824,6 +1867,22 @@ async def background_tick():
 
 
 async def background_worker():
+    global bot_username
+    for attempt in range(5):
+        try:
+            me = await telegram("getMe", {})
+            bot_username = me["username"]
+            await telegram("setWebhook", {
+                "url": PUBLIC_URL.rstrip("/") + "/telegram",
+                "secret_token": WEBHOOK_SECRET,
+                "allowed_updates": ["message", "callback_query"],
+            })
+            log.info("John Tipster VIP platform started as @%s", bot_username)
+            break
+        except Exception:
+            log.exception("Telegram webhook setup failed (attempt %s/5)", attempt + 1)
+            await asyncio.sleep(5)
+
     while True:
         try:
             await background_tick()
@@ -1838,21 +1897,9 @@ async def background_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global bot_username
     check_settings()
     init_db()
-
-    me = await telegram("getMe", {})
-    bot_username = me["username"]
-
-    await telegram("setWebhook", {
-        "url": PUBLIC_URL.rstrip("/") + "/telegram",
-        "secret_token": WEBHOOK_SECRET,
-        "allowed_updates": ["message", "callback_query"],
-    })
-
     worker = asyncio.create_task(background_worker())
-    log.info("John Tipster VIP platform started as @%s", bot_username)
     try:
         yield
     finally:
@@ -1946,4 +1993,36 @@ Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages').
 }});
 </script>
 </body>
-</html>
+</html>"""
+
+
+@app.post("/telegram")
+async def telegram_webhook(request: Request):
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secrets.compare_digest(secret, WEBHOOK_SECRET):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    update = await request.json()
+    try:
+        if "message" in update:
+            await handle_message(update["message"])
+        elif "callback_query" in update:
+            await handle_callback(update["callback_query"])
+    except Exception:
+        log.exception("Telegram update processing failed")
+    return {"ok": True}
+
+
+@app.post("/payhero/callback")
+async def payhero_callback(request: Request):
+    payload = await request.json()
+    try:
+        await process_payhero_callback(payload)
+    except Exception:
+        log.exception("PayHero callback processing failed")
+        raise HTTPException(status_code=503, detail="Payment verification failed")
+    return {"ok": True}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
