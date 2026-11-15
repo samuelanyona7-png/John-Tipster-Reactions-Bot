@@ -10,6 +10,7 @@ import asyncio
 import secrets
 import sqlite3
 import logging
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from contextlib import asynccontextmanager, contextmanager
 from html import escape as html_escape
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException, Header, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -53,7 +54,18 @@ MAIN_CHANNEL_URL = env_str("MAIN_CHANNEL_URL")
 WEBHOOK_SECRET = env_str("WEBHOOK_SECRET")
 
 PAYHERO_AUTH_TOKEN = env_str("PAYHERO_AUTH_TOKEN")
+PAYHERO_API_USERNAME = env_str("PAYHERO_API_USERNAME")
+PAYHERO_API_PASSWORD = env_str("PAYHERO_API_PASSWORD")
 PAYHERO_CHANNEL_ID = env_str("PAYHERO_CHANNEL_ID")
+PAYHERO_CREDENTIAL_ID = env_str("PAYHERO_CREDENTIAL_ID")
+
+# Optional CryptAPI configuration (can also be configured in Admin Dashboard -> CryptAPI Settings)
+CRYPTAPI_CALLBACK_BASE_URL = env_str("CRYPTAPI_CALLBACK_BASE_URL")
+CRYPTAPI_CONFIRMATIONS = env_str("CRYPTAPI_CONFIRMATIONS", "1")
+CRYPTAPI_VERIFY_FILE_NAME = env_str("CRYPTAPI_VERIFY_FILE_NAME")
+CRYPTAPI_VERIFY_FILE_CONTENT = env_str("CRYPTAPI_VERIFY_FILE_CONTENT")
+CRYPTAPI_WALLETS_JSON = env_str("CRYPTAPI_WALLETS_JSON")
+
 EXCHANGE_RATE_API_KEY = env_str("EXCHANGE_RATE_API_KEY")
 FOOTBALL_API_KEY = env_str("FOOTBALL_API_KEY")
 AI_API_KEY = env_str("AI_API_KEY")
@@ -70,13 +82,16 @@ if DATABASE_URL.startswith("postgres://"):
 
 USE_POSTGRES = bool(DATABASE_URL)
 PAYHERO_URL = "https://backend.payhero.co.ke/api/v2"
+CRYPTAPI_URL = "https://api.cryptapi.io"
 STK_COOLDOWN_SECONDS = 45
 FX_CACHE_HOURS = 6
+CRYPTAPI_CACHE_MINUTES = 30
 REACTION_EMOJIS = ["🔥", "❤️", "💯", "🙏", "👍", "😍"]
 BUTTON_STYLES = ["primary", "success", "danger"]
 
 bot_username = None
 http_client: httpx.AsyncClient | None = None
+_cryptapi_catalog_cache = {"fetched_at": None, "coins": {}, "networks": {}}
 
 # --------------------------------------------------
 # INTERNATIONAL COUNTRIES & SUPPORTED CURRENCIES
@@ -85,85 +100,86 @@ http_client: httpx.AsyncClient | None = None
 COUNTRIES = {
     "KE": {
         "flag": "🇰🇪", "name": "Kenya", "currency": "KES", "tz": "Africa/Nairobi",
-        "methods": ["mpesa", "mpesa_till", "airtel"],
+        "methods": ["mpesa", "mpesa_till", "airtel", "crypto"],
         "how": (
             f"1️⃣ <b>M-Pesa STK Push (PayHero)</b> for instant automatic checkout.\n"
             f"2️⃣ Or pay manually via <b>Lipa na M-Pesa Buy Goods Till: <code>{DEFAULT_MPESA_TILL}</code></b>.\n"
             f"3️⃣ Or use <b>Airtel Money: <code>{DEFAULT_AIRTEL_NUMBER}</code></b>.\n"
-            "4️⃣ Share your payment screenshot or PDF receipt for confirmation & automatic delivery."
+            "4️⃣ Or pay instantly with <b>Crypto (CryptAPI — 100+ Coins)</b>.\n"
+            "5️⃣ Share your payment screenshot or PDF receipt if paying manually."
         ),
     },
     "TZ": {
         "flag": "🇹🇿", "name": "Tanzania", "currency": "TZS", "tz": "Africa/Dar_es_Salaam",
-        "methods": ["airtel", "mpesa_tz", "tigo"],
+        "methods": ["crypto", "airtel", "mpesa_tz", "tigo"],
         "how": (
-            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for M-Pesa TZ / Mixx by Yas).\n"
-            "2️⃣ Send the payment screenshot or receipt file here for confirmation.\n"
-            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+            f"1️⃣ Pay instantly via <b>Crypto (CryptAPI — USDT TRC20/BEP20, BTC, SOL & 100+ coins)</b> for automatic activation.\n"
+            f"2️⃣ Or select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for M-Pesa TZ / Mixx by Yas).\n"
+            "3️⃣ Send the payment screenshot or receipt file here for manual confirmation."
         ),
     },
     "UG": {
         "flag": "🇺🇬", "name": "Uganda", "currency": "UGX", "tz": "Africa/Kampala",
-        "methods": ["airtel", "mtn"],
+        "methods": ["crypto", "airtel", "mtn"],
         "how": (
-            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
-            "2️⃣ Send your payment screenshot or receipt file here for confirmation.\n"
-            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+            f"1️⃣ Pay instantly via <b>Crypto (CryptAPI — USDT, BTC, LTC & 100+ coins)</b> for automatic activation.\n"
+            f"2️⃣ Or select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
+            "3️⃣ Send your payment screenshot or receipt file here for confirmation."
         ),
     },
     "ZM": {
         "flag": "🇿🇲", "name": "Zambia", "currency": "ZMW", "tz": "Africa/Lusaka",
-        "methods": ["airtel", "mtn"],
+        "methods": ["crypto", "airtel", "mtn"],
         "how": (
-            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
-            "2️⃣ Send your payment screenshot or receipt file here for confirmation.\n"
-            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+            f"1️⃣ Pay instantly via <b>Crypto (CryptAPI — 100+ coins)</b> for automatic activation.\n"
+            f"2️⃣ Or select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
+            "3️⃣ Send your payment screenshot or receipt file here for confirmation."
         ),
     },
     "NG": {
         "flag": "🇳🇬", "name": "Nigeria", "currency": "NGN", "tz": "Africa/Lagos",
-        "methods": ["ng_bank"],
-        "how": "1️⃣ Select Nigeria Bank / OPay / PalmPay.\n2️⃣ Contact @isla_olivia0 for Naira transfer details.\n3️⃣ Send payment screenshot or PDF receipt here for confirmation.",
+        "methods": ["crypto", "ng_bank"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — USDT TRC20/BEP20, BTC, SOL, TON & 100+ coins)</b>.\n2️⃣ Or select Nigeria Bank / OPay / PalmPay & contact @isla_olivia0 for Naira transfer details.",
     },
     "GH": {
         "flag": "🇬🇭", "name": "Ghana", "currency": "GHS", "tz": "Africa/Accra",
-        "methods": ["airtel", "mtn"],
-        "how": f"1️⃣ Select AirtelTigo Money (<code>{DEFAULT_AIRTEL_NUMBER}</code>) or MTN MoMo via @isla_olivia0.\n2️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "airtel", "mtn"],
+        "how": f"1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select AirtelTigo Money (<code>{DEFAULT_AIRTEL_NUMBER}</code>) or MTN MoMo via @isla_olivia0.",
     },
     "ZA": {
         "flag": "🇿🇦", "name": "South Africa", "currency": "ZAR", "tz": "Africa/Johannesburg",
-        "methods": ["za_eft"],
-        "how": "1️⃣ Select Instant EFT / Capitec.\n2️⃣ Contact @isla_olivia0 for EFT details.\n3️⃣ Send payment screenshot or PDF receipt here for confirmation.",
+        "methods": ["crypto", "za_eft"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select Instant EFT / Capitec & contact @isla_olivia0 for EFT details.",
     },
     "US": {
         "flag": "🇺🇸", "name": "United States", "currency": "USD", "tz": "America/New_York",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select International Card / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for checkout details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — BTC, ETH, USDT, USDC, SOL & 100+ coins)</b>.\n2️⃣ Or select Card / PayPal / Transfer via @isla_olivia0.",
     },
     "GB": {
         "flag": "🇬🇧", "name": "United Kingdom", "currency": "GBP", "tz": "Europe/London",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select UK Bank / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select UK Bank / PayPal via @isla_olivia0.",
     },
     "EU": {
         "flag": "🇪🇺", "name": "Europe (Eurozone)", "currency": "EUR", "tz": "Europe/Berlin",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select SEPA / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select SEPA / PayPal via @isla_olivia0.",
     },
     "IN": {
         "flag": "🇮🇳", "name": "India", "currency": "INR", "tz": "Asia/Kolkata",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select UPI / International Transfer / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — USDT TRC20/BEP20/Polygon, BTC & 100+ coins)</b>.\n2️⃣ Or select UPI / Transfer via @isla_olivia0.",
     },
     "CA": {
         "flag": "🇨🇦", "name": "Canada", "currency": "CAD", "tz": "America/Toronto",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select Interac / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select Interac / PayPal via @isla_olivia0.",
     },
     "AU": {
         "flag": "🇦🇺", "name": "Australia", "currency": "AUD", "tz": "Australia/Sydney",
-        "methods": ["intl_transfer"],
-        "how": "1️⃣ Select PayID / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
+        "methods": ["crypto", "intl_transfer"],
+        "how": "1️⃣ Pay automatically via <b>Crypto (CryptAPI — 100+ coins)</b>.\n2️⃣ Or select PayID / PayPal via @isla_olivia0.",
     },
 }
 
@@ -189,15 +205,50 @@ METHOD_LABELS = {
     "mpesa": ("📲 M-Pesa STK Push (PayHero)", "success"),
     "mpesa_till": (f"🏪 Manual M-Pesa Till ({DEFAULT_MPESA_TILL})", "primary"),
     "airtel": (f"🔴 Airtel Money ({DEFAULT_AIRTEL_NUMBER})", "danger"),
+    "crypto": ("🪙 Crypto (CryptAPI — 100+ Coins)", "success"),
     "mtn": ("🟡 MTN Mobile Money", "primary"),
     "mpesa_tz": ("🇹🇿 Vodacom M-Pesa TZ", "primary"),
     "tigo": ("🔵 Mixx / Tigo Pesa", "primary"),
     "ng_bank": ("🇳🇬 Bank / OPay / PalmPay", "success"),
     "za_eft": ("🇿🇦 Instant EFT / Capitec", "primary"),
-    "intl_transfer": ("💲 International / PayPal / USDT", "success"),
+    "intl_transfer": ("💲 Card / PayPal / Bank Transfer", "primary"),
 }
 
 ACCUM_CATEGORIES = ["3-5 Odds", "5-10 Odds", "10-15 Odds", "15-20 Odds", "20+ Odds"]
+
+CRYPTO_WALLET_GROUPS = [
+    ("evm", "🔷 EVM Chains (ETH, ERC20, BEP20, Polygon, Arbitrum, Optimism, Base, AVAX, etc.)", "CRYPTAPI_EVM_ADDRESS"),
+    ("tron", "🔴 TRON & TRC20 (TRX, USDT-TRC20, USDC-TRC20, etc.)", "CRYPTAPI_TRON_ADDRESS"),
+    ("sol", "🟣 Solana & SPL Tokens (SOL, USDT-SOL, USDC-SOL, etc.)", "CRYPTAPI_SOL_ADDRESS"),
+    ("ton", "💎 TON & Jettons (TON, USDT-TON)", "CRYPTAPI_TON_ADDRESS"),
+    ("btc", "🟠 Bitcoin (BTC)", "CRYPTAPI_BTC_ADDRESS"),
+    ("ltc", "⚪ Litecoin (LTC)", "CRYPTAPI_LTC_ADDRESS"),
+    ("bch", "🟢 Bitcoin Cash (BCH)", "CRYPTAPI_BCH_ADDRESS"),
+    ("doge", "🟡 Dogecoin (DOGE)", "CRYPTAPI_DOGE_ADDRESS"),
+    ("zec", "🛡️ Zcash (ZEC)", "CRYPTAPI_ZEC_ADDRESS"),
+]
+
+CRYPTO_NETWORK_LABELS = {
+    "coins": "🪙 Native Coins",
+    "trc20": "🔴 Tron (TRC-20)",
+    "bep20": "🟡 BNB Smart Chain (BEP-20)",
+    "erc20": "🔷 Ethereum (ERC-20)",
+    "polygon": "🟣 Polygon",
+    "sol": "🧬 Solana",
+    "ton": "💎 TON",
+    "arbitrum": "🔵 Arbitrum One",
+    "optimism": "🔺 Optimism",
+    "base": "🟦 Base",
+    "avax-c": "❄️ Avalanche-C",
+    "linea": "📏 Linea",
+    "monad": "🟪 Monad",
+    "berachain": "🐻 Berachain",
+}
+
+POPULAR_CRYPTO_TICKERS = [
+    "trc20/usdt", "bep20/usdt", "sol/usdt", "ton/usdt", "polygon/usdt", "erc20/usdt",
+    "trc20/usdc", "bep20/usdc", "sol/usdc", "base/usdc", "btc", "eth", "ltc", "trx", "sol/sol", "ton/ton", "doge", "bch",
+]
 
 
 def check_settings():
@@ -207,10 +258,11 @@ def check_settings():
         "CHANNEL_ID": CHANNEL_ID,
         "VIP_CHANNEL_ID": VIP_CHANNEL_ID,
         "WEBHOOK_SECRET": WEBHOOK_SECRET,
-        "PAYHERO_AUTH_TOKEN": PAYHERO_AUTH_TOKEN,
         "PAYHERO_CHANNEL_ID": PAYHERO_CHANNEL_ID,
         "PUBLIC_URL / RENDER_EXTERNAL_URL": PUBLIC_URL,
     }
+    if not PAYHERO_AUTH_TOKEN and not (PAYHERO_API_USERNAME and PAYHERO_API_PASSWORD):
+        settings["PAYHERO_AUTH_TOKEN (or PAYHERO_API_USERNAME + PAYHERO_API_PASSWORD)"] = ""
     missing = [k for k, v in settings.items() if not v]
     if missing:
         raise RuntimeError("Missing environment variables: " + ", ".join(missing))
@@ -380,6 +432,12 @@ def init_db():
                 mpesa_receipt TEXT,
                 proof_file_id TEXT,
                 proof_type TEXT NOT NULL DEFAULT 'photo',
+                crypto_ticker TEXT,
+                crypto_address_in TEXT,
+                crypto_amount TEXT,
+                crypto_txid TEXT,
+                crypto_uuid TEXT,
+                callback_nonce TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -510,6 +568,12 @@ def init_db():
         ensure_column(db, "orders", "proof_type", "TEXT NOT NULL DEFAULT 'photo'")
         ensure_column(db, "orders", "currency", "TEXT NOT NULL DEFAULT 'KES'")
         ensure_column(db, "orders", "local_amount", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "orders", "crypto_ticker", "TEXT")
+        ensure_column(db, "orders", "crypto_address_in", "TEXT")
+        ensure_column(db, "orders", "crypto_amount", "TEXT")
+        ensure_column(db, "orders", "crypto_txid", "TEXT")
+        ensure_column(db, "orders", "crypto_uuid", "TEXT")
+        ensure_column(db, "orders", "callback_nonce", "TEXT")
         ensure_column(db, "subscriptions", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "subscriptions", "reminded", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "matches", "market", "TEXT NOT NULL DEFAULT '1X2'")
@@ -538,6 +602,7 @@ def init_db():
             "vip_channel_id": VIP_CHANNEL_ID,
             "main_channel_url": MAIN_CHANNEL_URL or (f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID.startswith("@") else ""),
             "payhero_channel_id": PAYHERO_CHANNEL_ID,
+            "env_payhero_channel_id": PAYHERO_CHANNEL_ID,
             "mpesa_till_number": DEFAULT_MPESA_TILL,
             "airtel_money_number": DEFAULT_AIRTEL_NUMBER,
             "auto_confirm_screenshot": "0",
@@ -546,9 +611,24 @@ def init_db():
             "admin_contact_url": f"https://t.me/{BRAND_TAG.lstrip('@')}",
             "website_url": WEBSITE_URL_ENV or DEFAULT_WEBSITE_URL,
             "auto_channel_buttons": "0",
+            "cryptapi_wallets": "{}",
+            "cryptapi_confirmations": CRYPTAPI_CONFIRMATIONS or "1",
+            "cryptapi_callback_base": CRYPTAPI_CALLBACK_BASE_URL,
         }
         for k, v in default_settings.items():
             db.execute("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
+
+        # Auto-sync PAYHERO_CHANNEL_ID if environment variable was updated between deploys
+        prev_env_ph = db.execute("SELECT value FROM app_settings WHERE key='env_payhero_channel_id'").fetchone()
+        if PAYHERO_CHANNEL_ID and (not prev_env_ph or prev_env_ph["value"] != PAYHERO_CHANNEL_ID):
+            db.execute(
+                "INSERT INTO app_settings(key,value) VALUES('payhero_channel_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (PAYHERO_CHANNEL_ID,),
+            )
+            db.execute(
+                "INSERT INTO app_settings(key,value) VALUES('env_payhero_channel_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (PAYHERO_CHANNEL_ID,),
+            )
 
         seeded = db.execute("SELECT value FROM app_settings WHERE key='seeded_ticket_buttons'").fetchone()
         if not seeded:
@@ -591,7 +671,8 @@ def log_audit(actor_id, action, details=""):
 def get_setting(key, fallback=""):
     with connect_db() as db:
         row = db.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
-    return row["value"] if row else fallback
+    val = row["value"] if row else fallback
+    return val if (val is not None and val != "") else fallback
 
 
 def set_setting(key, value):
@@ -796,6 +877,13 @@ def get_cached_rate(currency_code):
     return float(row["rate_from_kes"]) if row else None
 
 
+def kes_to_usd(kes_amount):
+    rate = get_cached_rate("USD")
+    if not rate or rate <= 0:
+        rate = 1.0 / 129.0  # Safe emergency fallback only if FX API hasn't responded yet
+    return round(float(kes_amount) * rate, 2)
+
+
 def format_converted_price(kes_amount, display_currency):
     code = (display_currency or "KES").upper()
     rate = get_cached_rate(code)
@@ -874,6 +962,23 @@ async def telegram_send_document(chat_id, filename, content_bytes, caption=""):
     res = resp.json()
     if not res.get("ok"):
         raise RuntimeError(f"sendDocument failed: {res.get('description', res)}")
+    return res.get("result")
+
+
+async def telegram_send_photo_bytes(chat_id, filename, photo_bytes, caption="", keyboard=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    client = await get_http()
+    data = {"chat_id": str(chat_id), "caption": caption[:1020], "parse_mode": "HTML"}
+    if keyboard:
+        data["reply_markup"] = json.dumps(keyboard)
+    resp = await client.post(
+        url,
+        data=data,
+        files={"photo": (filename, photo_bytes, "image/png")},
+    )
+    res = resp.json()
+    if not res.get("ok"):
+        raise RuntimeError(f"sendPhoto failed: {res.get('description', res)}")
     return res.get("result")
 
 
@@ -1172,7 +1277,7 @@ def admin_keyboard(user_id):
         ],
         [
             {"text": "💰 Manage VIP Plans", "callback_data": "admin:packages", "style": "success"},
-            {"text": "⚙️ Channels & Settings", "callback_data": "admin:channels", "style": "primary"},
+            {"text": "⚙️ Channels & Payment Settings", "callback_data": "admin:channels", "style": "primary"},
         ],
         [
             {"text": "📥 Export CSV", "callback_data": "admin:export", "style": "success"},
@@ -1184,14 +1289,17 @@ def admin_keyboard(user_id):
 
 
 # --------------------------------------------------
-# PAYMENTS (PayHero STK + Till 6076817 Fallback + Airtel +254754490056 + Screenshots/PDF)
+# PAYHERO KENYA API v2 (FIXED AUTH, CHANNEL SYNC, DIAGNOSTICS & CALLBACKS)
 # --------------------------------------------------
 
 def payhero_headers():
-    token = PAYHERO_AUTH_TOKEN.strip()
-    if token.lower().startswith("basic "):
-        authorization = token
-    elif ":" in token:
+    if PAYHERO_API_USERNAME and PAYHERO_API_PASSWORD and not PAYHERO_AUTH_TOKEN:
+        raw_creds = f"{PAYHERO_API_USERNAME}:{PAYHERO_API_PASSWORD}".encode("utf-8")
+        return {"Authorization": "Basic " + base64.b64encode(raw_creds).decode("utf-8"), "Content-Type": "application/json"}
+
+    token = PAYHERO_AUTH_TOKEN.strip().strip('"').strip("'").strip()
+    token = re.sub(r"^(basic|bearer)\s+", "", token, flags=re.IGNORECASE).strip()
+    if ":" in token:
         encoded = base64.b64encode(token.encode("utf-8")).decode("utf-8")
         authorization = f"Basic {encoded}"
     else:
@@ -1201,9 +1309,11 @@ def payhero_headers():
 
 def normalize_phone(phone):
     phone = re.sub(r"[\s+\-()]", "", phone)
-    if phone.startswith("254") and len(phone) == 12:
+    if phone.startswith("2540") and len(phone) == 13:
+        phone = "0" + phone[4:]
+    elif phone.startswith("254") and len(phone) == 12:
         phone = "0" + phone[3:]
-    if (phone.startswith("7") or phone.startswith("1")) and len(phone) == 9:
+    elif (phone.startswith("7") or phone.startswith("1")) and len(phone) == 9:
         phone = "0" + phone
     return phone if re.fullmatch(r"0[17]\d{8}", phone) else None
 
@@ -1323,6 +1433,23 @@ async def create_manual_order_and_prompt(user_id, plan_name, method_key):
     )
 
 
+async def fetch_payhero_diagnostics():
+    client = await get_http()
+    headers = payhero_headers()
+    ch_res, wal_res = {}, {}
+    try:
+        r1 = await client.get(PAYHERO_URL + "/payment_channels", headers=headers, params={"is_active": "true"}, timeout=20)
+        ch_res = {"status": r1.status_code, "data": r1.json() if r1.headers.get("content-type", "").startswith("application/json") else r1.text[:300]}
+    except Exception as e:
+        ch_res = {"status": 0, "error": str(e)}
+    try:
+        r2 = await client.get(PAYHERO_URL + "/wallets", headers=headers, params={"wallet_type": "service_wallet"}, timeout=20)
+        wal_res = {"status": r2.status_code, "data": r2.json() if r2.headers.get("content-type", "").startswith("application/json") else r2.text[:300]}
+    except Exception as e:
+        wal_res = {"status": 0, "error": str(e)}
+    return {"channels": ch_res, "wallet": wal_res}
+
+
 async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
     offer = resolve_offer(plan_name)
     if not offer:
@@ -1338,8 +1465,11 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
         return {"ok": False, "error": msg}
 
     external_ref = "PTE" + secrets.token_hex(7).upper()
-    amount = int(offer["price"])
-    ph_channel = int(get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID))
+    amount = max(1, int(offer["price"]))
+    raw_ch = get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID)
+    if not str(raw_ch).isdigit():
+        raw_ch = PAYHERO_CHANNEL_ID
+    ph_channel = int(raw_ch)
     item_title = offer["title"]
 
     db_user = get_user(user_id)
@@ -1363,6 +1493,8 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
         "customer_name": cust_name,
         "callback_url": PUBLIC_URL.rstrip("/") + "/payhero/callback",
     }
+    if PAYHERO_CREDENTIAL_ID:
+        payload["credential_id"] = PAYHERO_CREDENTIAL_ID
 
     try:
         client = await get_http()
@@ -1370,14 +1502,21 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
         try:
             result = response.json()
         except Exception:
-            result = {"raw": response.text[:300]}
+            result = {"raw": response.text[:350]}
 
         is_ok = (response.status_code in (200, 201)) and (bool(result.get("success")) or bool(result.get("reference")))
         if not is_ok:
-            log.error("PayHero STK failed (%s): %s", response.status_code, result)
+            log.error("PayHero STK failed (HTTP %s, channel=%s): %s", response.status_code, ph_channel, result)
+            err_msg = result.get("error_message") or result.get("message") or result.get("detail") or str(result)[:220]
             try:
-                err_msg = result.get("error_message") or result.get("message") or str(result)[:180]
-                await send_message(ADMIN_USER_ID, f"⚠️ PayHero STK fallback triggered (HTTP {response.status_code}): <code>{html_escape(str(err_msg))}</code>")
+                await send_message(
+                    ADMIN_USER_ID,
+                    f"⚠️ <b>PayHero STK Push Failed (HTTP {response.status_code})</b>\n"
+                    f"Channel ID used: <code>{ph_channel}</code>\n"
+                    f"Phone: <code>{html_escape(phone)}</code> | Amount: <b>KES {amount}</b>\n"
+                    f"Error: <code>{html_escape(str(err_msg))}</code>\n\n"
+                    "💡 Open Admin → Channels & Payment Settings → <b>🩺 PayHero Diagnostics</b> to inspect your auth token, active channel IDs, and service wallet balance.",
+                )
             except Exception:
                 pass
             if notify_telegram:
@@ -1386,12 +1525,12 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
                     external_ref,
                     item_title,
                     amount,
-                    reason_note="Instant STK Push could not be reached — use Manual Till 6076817 below!",
+                    reason_note=f"Instant STK Push could not be reached — use Manual Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)} below!",
                 )
-            return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "PayHero STK failed"}
+            return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": str(err_msg)}
 
         reference = result.get("reference")
-        checkout_id = result.get("CheckoutRequestID")
+        checkout_id = result.get("CheckoutRequestID") or result.get("checkout_request_id")
         if not reference:
             log.error("PayHero response missing reference: %s", result)
             if notify_telegram:
@@ -1400,7 +1539,7 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
                     external_ref,
                     item_title,
                     amount,
-                    reason_note="Instant STK Push unavailable — use Manual Till 6076817 below!",
+                    reason_note=f"Instant STK Push unavailable — use Manual Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)} below!",
                 )
             return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "Missing PayHero reference"}
 
@@ -1436,7 +1575,7 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
                 external_ref,
                 item_title,
                 amount,
-                reason_note="Instant STK Push timed out — use Manual Till 6076817 below!",
+                reason_note=f"Instant STK Push timed out — use Manual Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)} below!",
             )
         return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "Payment initiation failed"}
 
@@ -1450,6 +1589,573 @@ async def verify_payhero_transaction(reference):
     )
     response.raise_for_status()
     return response.json()
+
+
+# --------------------------------------------------
+# CRYPTAPI INTERNATIONAL CRYPTO PAYMENTS (ALL SUPPORTED COINS & NETWORKS)
+# --------------------------------------------------
+
+def get_cryptapi_wallets_map():
+    merged = {}
+    env_map = {
+        "evm": env_str("CRYPTAPI_EVM_ADDRESS"),
+        "tron": env_str("CRYPTAPI_TRON_ADDRESS"),
+        "sol": env_str("CRYPTAPI_SOL_ADDRESS"),
+        "ton": env_str("CRYPTAPI_TON_ADDRESS"),
+        "btc": env_str("CRYPTAPI_BTC_ADDRESS"),
+        "ltc": env_str("CRYPTAPI_LTC_ADDRESS"),
+        "bch": env_str("CRYPTAPI_BCH_ADDRESS"),
+        "doge": env_str("CRYPTAPI_DOGE_ADDRESS"),
+        "zec": env_str("CRYPTAPI_ZEC_ADDRESS"),
+    }
+    for k, v in env_map.items():
+        if v:
+            merged[k] = v
+    if CRYPTAPI_WALLETS_JSON:
+        try:
+            parsed = json.loads(CRYPTAPI_WALLETS_JSON)
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    if v:
+                        merged[str(k).lower().strip()] = str(v).strip()
+        except Exception:
+            log.warning("Invalid CRYPTAPI_WALLETS_JSON ignored")
+
+    raw_db = get_setting("cryptapi_wallets", "{}")
+    try:
+        db_parsed = json.loads(raw_db)
+        if isinstance(db_parsed, dict):
+            for k, v in db_parsed.items():
+                if v:
+                    merged[str(k).lower().strip()] = str(v).strip()
+    except Exception:
+        pass
+    return merged
+
+
+def save_cryptapi_wallet(key, address):
+    key = key.lower().strip()
+    raw_db = get_setting("cryptapi_wallets", "{}")
+    try:
+        data = json.loads(raw_db) if raw_db else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    if address and address.strip():
+        data[key] = address.strip()
+    else:
+        data.pop(key, None)
+    set_setting("cryptapi_wallets", json.dumps(data))
+
+
+def get_wallet_for_ticker(ticker):
+    t = (ticker or "").lower().strip()
+    wallets = get_cryptapi_wallets_map()
+    if t in wallets and wallets[t]:
+        return wallets[t]
+
+    network = t.split("/", 1)[0] if "/" in t else "coins"
+    if t in ("btc", "bch", "ltc", "doge", "zec"):
+        return wallets.get(t, "")
+    if t in ("trx",) or network == "trc20":
+        return wallets.get("tron", "")
+    if t in ("sol",) or network == "sol":
+        return wallets.get("sol", "")
+    if t in ("ton",) or network == "ton":
+        return wallets.get("ton", "")
+    if t == "eth" or network in ("erc20", "bep20", "bsc", "polygon", "arbitrum", "optimism", "base", "avax-c", "avax", "linea", "monad", "berachain", "bera"):
+        return wallets.get("evm", "")
+    return wallets.get(network, "")
+
+
+def _parse_cryptapi_info_payload(raw):
+    coins = {}
+    networks = {}
+
+    def add_coin(ticker_guess, info_dict, net_key):
+        t = (info_dict.get("ticker") or ticker_guess or "").lower().strip()
+        if not t:
+            return
+        name = info_dict.get("coin") or t.upper()
+        min_coin = info_dict.get("minimum_transaction_coin")
+        if min_coin is None and info_dict.get("minimum_transaction") is not None:
+            min_coin = info_dict.get("minimum_transaction")
+        prices = info_dict.get("prices") or {}
+        usd_price = None
+        if isinstance(prices, dict) and prices.get("USD") is not None:
+            try:
+                usd_price = float(prices["USD"])
+            except (ValueError, TypeError):
+                usd_price = None
+        entry = {
+            "ticker": t,
+            "name": str(name),
+            "network": net_key,
+            "min_coin": float(min_coin) if min_coin not in (None, "") else 0.0,
+            "usd_price": usd_price,
+            "fee_percent": info_dict.get("fee_percent"),
+        }
+        coins[t] = entry
+        networks.setdefault(net_key, []).append(entry)
+
+    for top_k, top_v in (raw or {}).items():
+        if top_k in ("fee_tiers", "status", "minimum_fee") or not isinstance(top_v, dict):
+            continue
+        if "coin" in top_v or "minimum_transaction_coin" in top_v or "ticker" in top_v:
+            add_coin(top_k, top_v, "coins")
+        else:
+            for sub_k, sub_v in top_v.items():
+                if isinstance(sub_v, dict) and ("coin" in sub_v or "minimum_transaction_coin" in sub_v or "ticker" in sub_v):
+                    add_coin(f"{top_k}/{sub_k}", sub_v, top_k)
+
+    for net_k in networks:
+        networks[net_k].sort(key=lambda x: x["name"])
+    return coins, networks
+
+
+async def fetch_cryptapi_catalog(force=False):
+    now = utcnow()
+    fetched_at = _cryptapi_catalog_cache.get("fetched_at")
+    if not force and fetched_at and _cryptapi_catalog_cache["coins"]:
+        age_min = (now - fetched_at).total_seconds() / 60.0
+        if age_min < CRYPTAPI_CACHE_MINUTES:
+            return _cryptapi_catalog_cache["coins"], _cryptapi_catalog_cache["networks"]
+
+    try:
+        client = await get_http()
+        resp = await client.get(f"{CRYPTAPI_URL}/info/", params={"prices": "1"}, timeout=20)
+        if resp.status_code == 200:
+            raw = resp.json()
+            coins, networks = _parse_cryptapi_info_payload(raw)
+            if coins:
+                _cryptapi_catalog_cache["fetched_at"] = now
+                _cryptapi_catalog_cache["coins"] = coins
+                _cryptapi_catalog_cache["networks"] = networks
+                return coins, networks
+    except Exception as e:
+        log.warning("CryptAPI /info/ fetch failed: %s", e)
+
+    if _cryptapi_catalog_cache["coins"]:
+        return _cryptapi_catalog_cache["coins"], _cryptapi_catalog_cache["networks"]
+
+    fallback_list = [
+        ("btc", "Bitcoin", "coins", 0.00008),
+        ("eth", "Ethereum", "coins", 0.0015),
+        ("ltc", "Litecoin", "coins", 0.002),
+        ("bch", "Bitcoin Cash", "coins", 0.0005),
+        ("doge", "Dogecoin", "coins", 10.0),
+        ("zec", "Zcash", "coins", 0.0025),
+        ("trx", "TRON", "coins", 10.0),
+        ("trc20/usdt", "USDT (TRC20)", "trc20", 1.0),
+        ("bep20/usdt", "USDT (BEP20)", "bep20", 1.0),
+        ("erc20/usdt", "USDT (ERC20)", "erc20", 5.0),
+        ("polygon/usdt", "USDT (Polygon)", "polygon", 1.0),
+        ("sol/usdt", "USDT (Solana)", "sol", 1.0),
+        ("ton/usdt", "USDT (TON)", "ton", 1.0),
+        ("sol/sol", "Solana", "sol", 0.01),
+        ("ton/ton", "Toncoin", "ton", 0.2),
+        ("bep20/bnb", "BNB (BEP20)", "bep20", 0.002),
+        ("polygon/pol", "POL (Polygon)", "polygon", 1.0),
+    ]
+    coins, networks = {}, {}
+    for t, name, net, mn in fallback_list:
+        e = {"ticker": t, "name": name, "network": net, "min_coin": mn, "usd_price": None, "fee_percent": "1.0"}
+        coins[t] = e
+        networks.setdefault(net, []).append(e)
+    return coins, networks
+
+
+def get_cryptapi_callback_base():
+    base = get_setting("cryptapi_callback_base", "").strip() or CRYPTAPI_CALLBACK_BASE_URL or PUBLIC_URL
+    return base.rstrip("/")
+
+
+async def cryptapi_convert_usd_to_coin(ticker, usd_amount):
+    client = await get_http()
+    resp = await client.get(
+        f"{CRYPTAPI_URL}/{ticker}/convert/",
+        params={"value": f"{usd_amount:.2f}", "from": "USD"},
+        timeout=20,
+    )
+    data = resp.json()
+    if resp.status_code != 200 or data.get("status") == "error":
+        raise RuntimeError(data.get("error") or f"Convert failed (HTTP {resp.status_code})")
+    return float(data["value_coin"]), float(data.get("exchange_rate") or 0)
+
+
+async def cryptapi_create_address(ticker, address_out, callback_url, confirmations=1):
+    client = await get_http()
+    resp = await client.get(
+        f"{CRYPTAPI_URL}/{ticker}/create/",
+        params={
+            "callback": callback_url,
+            "address": address_out,
+            "pending": "1",
+            "confirmations": str(confirmations),
+            "post": "1",
+        },
+        timeout=25,
+    )
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"error": resp.text[:300]}
+    if resp.status_code != 200 or data.get("status") == "error":
+        err = data.get("error") or data.get("detail") or str(data)
+        raise RuntimeError(err)
+    return data
+
+
+async def cryptapi_get_qrcode(ticker, address_in, value_coin=None):
+    client = await get_http()
+    params = {"address": address_in, "size": "512"}
+    if value_coin is not None:
+        params["value"] = str(value_coin)
+    resp = await client.get(f"{CRYPTAPI_URL}/{ticker}/qrcode/", params=params, timeout=20)
+    data = resp.json()
+    if resp.status_code != 200 or not data.get("qr_code"):
+        raise RuntimeError(data.get("error") or "QR generation failed")
+    return base64.b64decode(data["qr_code"]), data.get("payment_uri", "")
+
+
+async def cryptapi_get_logs(ticker, callback_url):
+    client = await get_http()
+    resp = await client.get(
+        f"{CRYPTAPI_URL}/{ticker}/logs/",
+        params={"callback": callback_url},
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        return None
+    return resp.json()
+
+
+def build_cryptapi_callback_url(external_ref, nonce):
+    base = get_cryptapi_callback_base()
+    qs = urlencode({"order_ref": external_ref, "nonce": nonce})
+    return f"{base}/cryptapi/callback?{qs}"
+
+
+async def show_crypto_checkout_menu(chat_id, user_id, offer_key, view="home", page=0, message_id=None):
+    coins, networks = await fetch_cryptapi_catalog()
+    enabled_coins = {t: info for t, info in coins.items() if get_wallet_for_ticker(t)}
+
+    if not enabled_coins:
+        kb = {
+            "inline_keyboard": [
+                [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
+                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+            ]
+        }
+        await edit_or_send(
+            chat_id,
+            message_id,
+            "⚠️ <b>Crypto payments are not configured yet.</b>\n\n"
+            + ("Admin: Go to <b>Admin → Channels & Payment Settings → 🪙 CryptAPI Crypto Settings</b> to add your wallet addresses." if is_admin(user_id)
+               else f"Please choose another payment method or contact <b>{BRAND_TAG}</b>."),
+            kb,
+        )
+        return
+
+    offer = resolve_offer(offer_key)
+    if not offer:
+        await send_message(chat_id, "⚠️ Selected item is unavailable.")
+        return
+
+    usd_est = kes_to_usd(offer["price"])
+    rows = []
+
+    if view == "home":
+        pop_rows = []
+        pop_list = [t for t in POPULAR_CRYPTO_TICKERS if t in enabled_coins]
+        for i in range(0, len(pop_list), 2):
+            pair = []
+            for t in pop_list[i:i + 2]:
+                c = enabled_coins[t]
+                pair.append({"text": f"🪙 {c['name']}", "callback_data": f"cryptopay|{offer_key}|{t}", "style": "success"})
+            pop_rows.append(pair)
+        rows.extend(pop_rows)
+        rows.append([
+            {"text": "💵 All Stablecoins", "callback_data": f"cryptolist|{offer_key}|stable|0", "style": "primary"},
+            {"text": "🌐 Browse All Networks", "callback_data": f"cryptolist|{offer_key}|nets|0", "style": "primary"},
+        ])
+        rows.append([{"text": "⬅️ Back", "callback_data": f"plan:{offer_key}" if not offer_key.startswith("btn:") else f"openbtn:{offer_key.split(':', 1)[1]}"}])
+        await edit_or_send(
+            chat_id,
+            message_id,
+            f"🪙 <b>CRYPTO CHECKOUT (CRYPTAPI)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
+            f"💰 Price: <b>KES {offer['price']:,}</b> (~<b>${usd_est:.2f} USD</b>)\n"
+            f"✅ Enabled Assets: <b>{len(enabled_coins)} coins & tokens</b>\n\n"
+            "👇 Choose a coin or browse by network below (automatic blockchain confirmation):",
+            {"inline_keyboard": rows},
+        )
+        return
+
+    if view == "nets":
+        active_nets = []
+        for net_k, net_items in networks.items():
+            cnt = sum(1 for item in net_items if item["ticker"] in enabled_coins)
+            if cnt > 0:
+                active_nets.append((net_k, cnt))
+        for i in range(0, len(active_nets), 2):
+            pair = []
+            for nk, cnt in active_nets[i:i + 2]:
+                lbl = CRYPTO_NETWORK_LABELS.get(nk, nk.upper())
+                pair.append({"text": f"{lbl} ({cnt})", "callback_data": f"cryptolist|{offer_key}|net:{nk}|0", "style": "primary"})
+            rows.append(pair)
+        rows.append([{"text": "⬅️ Popular Coins", "callback_data": f"cryptolist|{offer_key}|home|0"}])
+        await edit_or_send(
+            chat_id,
+            message_id,
+            f"🌐 <b>ALL CRYPTAPI NETWORKS</b>\nItem: <b>{html_escape(offer['title'])}</b> (~${usd_est:.2f} USD)\n\nSelect a blockchain network:",
+            {"inline_keyboard": rows},
+        )
+        return
+
+    if view == "stable":
+        items = [c for t, c in enabled_coins.items() if any(sym in t for sym in ("usdt", "usdc", "dai", "busd", "pyusd", "eurc", "usd1", "fdusd"))]
+        items.sort(key=lambda x: x["name"])
+        title = "💵 <b>ALL STABLECOINS</b>"
+    elif view.startswith("net:"):
+        net_k = view.split(":", 1)[1]
+        items = [c for c in networks.get(net_k, []) if c["ticker"] in enabled_coins]
+        title = f"🌐 <b>{html_escape(CRYPTO_NETWORK_LABELS.get(net_k, net_k.upper()))}</b>"
+    else:
+        items = sorted(enabled_coins.values(), key=lambda x: x["name"])
+        title = "🪙 <b>ALL SUPPORTED COINS</b>"
+
+    per_page = 12
+    total_pages = max(1, (len(items) + per_page - 1) // per_page)
+    page = max(0, min(int(page), total_pages - 1))
+    slice_items = items[page * per_page:(page + 1) * per_page]
+
+    for i in range(0, len(slice_items), 2):
+        pair = []
+        for c in slice_items[i:i + 2]:
+            pair.append({"text": c["name"], "callback_data": f"cryptopay|{offer_key}|{c['ticker']}", "style": "success"})
+        rows.append(pair)
+
+    nav = []
+    if page > 0:
+        nav.append({"text": "⬅️ Prev", "callback_data": f"cryptolist|{offer_key}|{view}|{page - 1}"})
+    if page < total_pages - 1:
+        nav.append({"text": "Next ➡️", "callback_data": f"cryptolist|{offer_key}|{view}|{page + 1}"})
+    if nav:
+        rows.append(nav)
+    rows.append([{"text": "⬅️ Back to Crypto Menu", "callback_data": f"cryptolist|{offer_key}|home|0"}])
+
+    await edit_or_send(
+        chat_id,
+        message_id,
+        f"{title} (Page {page + 1}/{total_pages})\n"
+        f"Item: <b>{html_escape(offer['title'])}</b> (~${usd_est:.2f} USD)\n\nSelect coin/token to pay:",
+        {"inline_keyboard": rows},
+    )
+
+
+async def start_cryptapi_payment(user_id, chat_id, offer_key, ticker):
+    offer = resolve_offer(offer_key)
+    if not offer:
+        await send_message(chat_id, "⚠️ Selected package/ticket is unavailable.")
+        return
+
+    ticker = ticker.lower().strip()
+    address_out = get_wallet_for_ticker(ticker)
+    if not address_out:
+        await send_message(chat_id, "⚠️ No receiving wallet is configured for this coin yet.")
+        return
+
+    coins, _ = await fetch_cryptapi_catalog()
+    coin_meta = coins.get(ticker, {"name": ticker.upper(), "min_coin": 0.0, "ticker": ticker})
+
+    usd_amount = kes_to_usd(offer["price"])
+    if usd_amount <= 0:
+        await send_message(chat_id, "⚠️ Invalid order amount.")
+        return
+
+    try:
+        value_coin, _ = await cryptapi_convert_usd_to_coin(ticker, usd_amount)
+    except Exception as e:
+        await send_message(chat_id, f"⚠️ Could not convert price to {html_escape(coin_meta['name'])}: <code>{html_escape(str(e))}</code>")
+        return
+
+    min_coin = float(coin_meta.get("min_coin") or 0)
+    if min_coin > 0 and value_coin < min_coin:
+        await send_message(
+            chat_id,
+            f"⚠️ <b>Order below network minimum for {html_escape(coin_meta['name'])}</b>\n\n"
+            f"• Required order amount: <code>{value_coin:.8f}</code> (~${usd_amount:.2f})\n"
+            f"• CryptAPI network minimum: <code>{min_coin}</code>\n\n"
+            "💡 Please choose a lower-fee network like <b>USDT (TRC20 / BEP20 / Polygon / Solana / TON)</b>, <b>LTC</b>, <b>TRX</b>, or <b>DOGE</b>!",
+            {"inline_keyboard": [[{"text": "🔄 Choose Another Coin", "callback_data": f"cryptolist|{offer_key}|home|0", "style": "primary"}]]},
+        )
+        return
+
+    external_ref = "CRY" + secrets.token_hex(6).upper()
+    nonce = secrets.token_hex(12)
+    callback_url = build_cryptapi_callback_url(external_ref, nonce)
+    confirmations = int(get_setting("cryptapi_confirmations", "1") or "1")
+
+    try:
+        created = await cryptapi_create_address(ticker, address_out, callback_url, confirmations=confirmations)
+    except Exception as e:
+        err_s = str(e)
+        log.error("CryptAPI create failed for %s: %s", ticker, err_s)
+        if "verify your domain" in err_s.lower():
+            try:
+                await send_message(
+                    ADMIN_USER_ID,
+                    f"🚨 <b>CryptAPI Domain Verification Required!</b>\n\n"
+                    f"Callback base: <code>{html_escape(get_cryptapi_callback_base())}</code>\n"
+                    "Verify your domain once at <b>https://cryptapi.io/verify_domain/</b> (via DNS TXT or HTTPS file), then CryptAPI will activate immediately!",
+                )
+            except Exception:
+                pass
+        await send_message(
+            chat_id,
+            f"⚠️ Could not create crypto deposit address right now: <code>{html_escape(err_s[:180])}</code>\n"
+            "Please try another coin or contact admin.",
+        )
+        return
+
+    address_in = created["address_in"]
+    coin_amount_str = f"{value_coin:.8f}".rstrip("0").rstrip(".")
+    if "." not in coin_amount_str:
+        coin_amount_str += ".0"
+    min_tx_display = created.get("minimum_transaction_coin") or min_coin
+
+    with connect_db() as db:
+        db.execute(
+            """
+            INSERT INTO orders(
+                external_ref,user_id,plan,amount,currency,local_amount,phone,provider,status,
+                crypto_ticker,crypto_address_in,crypto_amount,callback_nonce,created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                external_ref, user_id, offer["key"], int(offer["price"]),
+                "USD", f"${usd_amount:.2f} ({coin_amount_str} {coin_meta['name']})",
+                ticker, "crypto", "PENDING",
+                ticker, address_in, coin_amount_str, nonce, utcnow().isoformat(),
+            ),
+        )
+
+    caption = (
+        f"🪙 <b>PAY WITH {html_escape(coin_meta['name'].upper())}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
+        f"💵 Fiat Value: <b>${usd_amount:.2f} USD</b> (KES {offer['price']:,})\n"
+        f"💰 Send EXACT Amount: <code>{coin_amount_str}</code> <b>{html_escape(coin_meta['name'])}</b>\n"
+        f"📥 Deposit Address:\n<code>{html_escape(address_in)}</code>\n\n"
+        f"🔗 Order Ref: <code>{external_ref}</code>\n"
+        f"⚠️ Minimum Deposit: <code>{min_tx_display}</code> (transfers below minimum cannot be forwarded).\n"
+        f"⚡ <i>Activates automatically after {confirmations} blockchain confirmation(s)!</i>"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🔄 Check Crypto Payment", "callback_data": f"cryptocheck:{external_ref}", "style": "success"}],
+            [{"text": "🔄 Switch Coin / Network", "callback_data": f"cryptolist|{offer_key}|home|0", "style": "primary"}],
+            [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+        ]
+    }
+
+    try:
+        qr_bytes, _ = await cryptapi_get_qrcode(ticker, address_in, value_coin=coin_amount_str)
+        await telegram_send_photo_bytes(chat_id, f"{external_ref}.png", qr_bytes, caption=caption, keyboard=kb)
+    except Exception:
+        await send_message(chat_id, caption, kb)
+
+
+async def process_cryptapi_event(order, payload_data):
+    external_ref = order["external_ref"]
+    pending = str(payload_data.get("pending", "0")) in ("1", "true", "True")
+    txid_in = payload_data.get("txid_in") or ""
+    tx_uuid = payload_data.get("uuid") or ""
+    try:
+        paid_coin = float(payload_data.get("value_coin") or 0)
+    except (ValueError, TypeError):
+        paid_coin = 0.0
+    try:
+        expected_coin = float(order["crypto_amount"] or 0)
+    except (ValueError, TypeError):
+        expected_coin = 0.0
+
+    if pending:
+        with connect_db() as db:
+            db.execute("UPDATE orders SET crypto_txid=COALESCE(?, crypto_txid) WHERE external_ref=?", (txid_in or None, external_ref))
+        try:
+            await send_message(
+                int(order["user_id"]),
+                f"⏳ <b>CRYPTO PAYMENT DETECTED!</b>\n\n"
+                f"🔗 Ref: <code>{external_ref}</code>\n"
+                f"🧾 TxID: <code>{html_escape(txid_in or 'Pending')}</code>\n"
+                "⛓️ Waiting for blockchain confirmation — your ticket/VIP will activate automatically!",
+            )
+        except Exception:
+            pass
+        return "PENDING_CONFIRMATION"
+
+    # Confirmed (pending == 0)
+    if expected_coin > 0 and paid_coin > 0 and paid_coin < (expected_coin * 0.97):
+        with connect_db() as db:
+            db.execute(
+                "UPDATE orders SET status='PENDING_REVIEW', crypto_txid=?, crypto_uuid=?, mpesa_receipt=? WHERE external_ref=? AND status!='PAID'",
+                (txid_in, tx_uuid, txid_in, external_ref),
+            )
+        try:
+            await send_message(
+                int(order["user_id"]),
+                f"⚠️ <b>PARTIAL CRYPTO PAYMENT RECEIVED</b>\n\n"
+                f"Expected: <code>{expected_coin}</code> | Received: <code>{paid_coin}</code>\n"
+                f"Admin ({BRAND_TAG}) has been notified to review Ref <code>{external_ref}</code>.",
+            )
+            await send_message(
+                ADMIN_USER_ID,
+                f"⚠️ <b>UNDERPAID CRYPTO ORDER</b>\nRef: <code>{external_ref}</code> | User: <code>{order['user_id']}</code>\n"
+                f"Expected: <code>{expected_coin}</code> | Received: <code>{paid_coin}</code> ({order['crypto_ticker']})\n"
+                f"TxID: <code>{html_escape(txid_in)}</code>",
+                {
+                    "inline_keyboard": [[
+                        {"text": "✅ Approve & Deliver Anyway", "callback_data": f"admin:approve:{external_ref}", "style": "success"},
+                        {"text": "❌ Reject", "callback_data": f"admin:reject:{external_ref}", "style": "danger"},
+                    ]]
+                },
+            )
+        except Exception:
+            pass
+        return "UNDERPAID"
+
+    with connect_db() as db:
+        db.execute(
+            "UPDATE orders SET crypto_txid=?, crypto_uuid=?, mpesa_receipt=? WHERE external_ref=?",
+            (txid_in, tx_uuid, txid_in or f"CRYPTO-{external_ref}", external_ref),
+        )
+        fresh_order = db.execute("SELECT * FROM orders WHERE external_ref=?", (external_ref,)).fetchone()
+
+    await finalize_paid_order(fresh_order, callback_data={"MpesaReceiptNumber": txid_in or f"CRYPTO-{external_ref}"}, manual_admin=True)
+    return "PAID"
+
+
+async def verify_cryptapi_order_via_logs(order):
+    if not order["crypto_ticker"] or not order["callback_nonce"]:
+        return "NOT_CRYPTO"
+    cb_url = build_cryptapi_callback_url(order["external_ref"], order["callback_nonce"])
+    logs_data = await cryptapi_get_logs(order["crypto_ticker"], cb_url)
+    if not logs_data or logs_data.get("status") == "error":
+        return "NO_TX"
+    callbacks = logs_data.get("callbacks") or []
+    if not callbacks:
+        return "NO_TX"
+
+    # Prefer confirmed callback (pending == 0)
+    confirmed = [c for c in callbacks if str(c.get("pending", "1")) in ("0", "false", "False")]
+    if confirmed:
+        return await process_cryptapi_event(order, confirmed[-1])
+    return await process_cryptapi_event(order, callbacks[-1])
 
 
 # --------------------------------------------------
@@ -1621,11 +2327,29 @@ async def reward_referrer_if_eligible(payer_user_id):
             log.exception("Referral payout failed for referrer %s", referrer_id)
 
 
+def _extract_payhero_status(verified):
+    if not isinstance(verified, dict):
+        return ""
+    nested = verified.get("data") if isinstance(verified.get("data"), dict) else {}
+    raw = (
+        verified.get("status")
+        or verified.get("transaction_status")
+        or verified.get("Status")
+        or nested.get("status")
+        or nested.get("transaction_status")
+        or ""
+    )
+    return str(raw).upper().strip()
+
+
 async def finalize_paid_order(order, verified=None, callback_data=None, manual_admin=False):
     external_ref = order["external_ref"]
     if not manual_admin:
-        status = str((verified or {}).get("status") or (verified or {}).get("transaction_status") or "").upper()
-        if status == "FAILED":
+        status = _extract_payhero_status(verified)
+        cb_status = str((callback_data or {}).get("Status") or (callback_data or {}).get("status") or "").upper()
+        cb_rc = (callback_data or {}).get("ResultCode")
+
+        if status in ("FAILED", "CANCELLED", "CANCELED", "EXPIRED") or (cb_rc not in (None, 0, "0") and cb_status in ("FAILED", "CANCELLED", "CANCELED", "")):
             with connect_db() as db:
                 cur = db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=? AND status='PENDING'", (external_ref,))
             if cur.rowcount > 0:
@@ -1634,7 +2358,7 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
                         int(order["user_id"]),
                         "❌ <b>STK Push failed or was cancelled.</b>\nYou can still pay manually via Till <code>"
                         + html_escape(get_setting("mpesa_till_number", DEFAULT_MPESA_TILL))
-                        + "</code> and send your screenshot!",
+                        + "</code> and send your screenshot, or pay via Crypto!",
                         {
                             "inline_keyboard": [
                                 [{"text": f"🏪 Pay via Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)}", "callback_data": f"manualtill:{external_ref}", "style": "success"}],
@@ -1645,7 +2369,7 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
                 except Exception:
                     pass
             return "FAILED"
-        if status != "SUCCESS":
+        if status not in ("SUCCESS", "COMPLETED", "PAID"):
             return "PENDING"
         if callback_data and callback_data.get("Amount") is not None:
             try:
@@ -1654,7 +2378,15 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
             except (ValueError, TypeError):
                 return "PENDING"
 
-    receipt = (callback_data or {}).get("MpesaReceiptNumber") or (verified or {}).get("provider_reference") or order["mpesa_receipt"]
+    v_nested = (verified or {}).get("data") if isinstance((verified or {}).get("data"), dict) else {}
+    receipt = (
+        (callback_data or {}).get("MpesaReceiptNumber")
+        or (callback_data or {}).get("MPESA_Reference")
+        or (verified or {}).get("provider_reference")
+        or (verified or {}).get("transaction_reference")
+        or v_nested.get("provider_reference")
+        or order["mpesa_receipt"]
+    )
     with connect_db() as db:
         cur = db.execute(
             "UPDATE orders SET status='PAID', mpesa_receipt=COALESCE(?, mpesa_receipt) WHERE external_ref=? AND status IN ('PENDING','PENDING_PROOF','PENDING_REVIEW')",
@@ -1685,22 +2417,55 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
         ADMIN_USER_ID,
         f"✅ <b>{PROJECT_NAME} PAYMENT CONFIRMED</b>\n\n"
         f"🆔 User: <code>{order['user_id']}</code>\n"
+        f"💳 Method: <code>{html_escape(order['provider'].upper())}</code>\n"
         f"🎫 Item: <b>{html_escape(item_title)}</b> — {html_escape(amt_display)}\n"
-        f"🧾 Receipt: <code>{html_escape(receipt or 'N/A')}</code>",
+        f"🧾 Receipt/Tx: <code>{html_escape(receipt or 'N/A')}</code>",
     )
     return "PAID"
 
 
 async def process_payhero_callback(payload):
-    data = payload.get("response", payload)
-    external_ref = data.get("ExternalReference") or data.get("external_reference")
-    if not external_ref:
-        return
+    data = payload.get("response") if isinstance(payload.get("response"), dict) else payload
+    external_ref = data.get("ExternalReference") or data.get("external_reference") or payload.get("external_reference")
+    checkout_id = data.get("CheckoutRequestID") or data.get("checkout_request_id") or payload.get("CheckoutRequestID")
+    ph_ref = data.get("reference") or payload.get("reference")
+
+    order = None
     with connect_db() as db:
-        order = db.execute("SELECT * FROM orders WHERE external_ref=?", (external_ref,)).fetchone()
-    if not order or order["status"] == "PAID" or not order["payhero_reference"]:
+        if external_ref:
+            order = db.execute("SELECT * FROM orders WHERE external_ref=?", (external_ref,)).fetchone()
+        if not order and checkout_id:
+            order = db.execute("SELECT * FROM orders WHERE checkout_id=?", (checkout_id,)).fetchone()
+        if not order and ph_ref:
+            order = db.execute("SELECT * FROM orders WHERE payhero_reference=?", (ph_ref,)).fetchone()
+
+    if not order or order["status"] == "PAID":
         return
-    verified = await verify_payhero_transaction(order["payhero_reference"])
+
+    if not order["payhero_reference"]:
+        # Only mark FAILED if PayHero explicitly reports failure
+        if str(data.get("Status") or "").upper() == "FAILED" or data.get("ResultCode") not in (None, 0, "0"):
+            await finalize_paid_order(order, verified={"status": "FAILED"}, callback_data=data)
+        return
+
+    try:
+        verified = await verify_payhero_transaction(order["payhero_reference"])
+    except Exception as e:
+        log.warning("PayHero callback status check failed for %s: %s", order["external_ref"], e)
+        if str(data.get("Status") or "").upper() == "FAILED" or data.get("ResultCode") not in (None, 0, "0"):
+            await finalize_paid_order(order, verified={"status": "FAILED"}, callback_data=data)
+        return
+
+    # If PayHero callback arrived slightly ahead of transaction-status indexing, re-check once after 2s
+    if _extract_payhero_status(verified) in ("QUEUED", "PENDING", "") and (
+        str(data.get("Status") or "").upper() == "SUCCESS" or str(data.get("ResultCode")) == "0"
+    ):
+        await asyncio.sleep(2)
+        try:
+            verified = await verify_payhero_transaction(order["payhero_reference"])
+        except Exception:
+            pass
+
     await finalize_paid_order(order, verified=verified, callback_data=data)
 
 
@@ -1902,7 +2667,7 @@ async def publish_vip_post(selected_btn_ids=None, include_footer=True, include_r
             f"👑 <b>{PROJECT_NAME}</b> ({BRAND_TAG})\n\n"
             f"🎯 {html_escape(get_setting('vip_odds_info'))}\n\n"
             "⚡ Data-driven football analysis, VIP picks & accumulator tickets.\n"
-            "🌍 Supports M-Pesa, Airtel Money & international payments.\n\n"
+            "🌍 Supports M-Pesa, Airtel Money & 100+ Cryptocurrencies (CryptAPI).\n\n"
             "👇 <b>TAP BELOW TO JOIN VIP OR GET A TICKET</b>"
         ),
         "reply_markup": channel_post_keyboard(selected_btn_ids=sel_btns, include_footer=include_footer, include_reactions=False),
@@ -2115,6 +2880,7 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         kb_rows.append([{"text": f"📲 Kenya: M-Pesa STK Push (KES {price:,})", "callback_data": f"buybtn:{b['id']}:mpesa", "style": "success"}])
         kb_rows.append([{"text": f"🏪 Kenya: Manual M-Pesa Till {till_no}", "callback_data": f"buybtn:{b['id']}:mpesa_till", "style": "primary"}])
         kb_rows.append([{"text": f"🔴 TZ / UG / ZM: Airtel Money ({airtel_no})", "callback_data": f"buybtn:{b['id']}:airtel", "style": "danger"}])
+        kb_rows.append([{"text": "🪙 International: Crypto (CryptAPI — 100+ Coins)", "callback_data": f"buybtn:{b['id']}:crypto", "style": "success"}])
         kb_rows.append([{"text": f"🌍 Other Countries: Contact {BRAND_TAG}", "url": contact_url, "style": "primary"}])
         kb_rows.append([{"text": "📸 Send Payment Screenshot / PDF", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
     else:
@@ -2130,7 +2896,8 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         f"💳 <b>HOW TO PAY:</b>\n"
         f"🇰🇪 <b>Kenya:</b> Use instant <b>M-Pesa STK Push (PayHero)</b> OR pay manually to Buy Goods Till <code>{html_escape(till_no)}</code>.\n"
         f"🇹🇿🇺🇬🇿🇲 <b>Tanzania, Uganda & Zambia:</b> Send via <b>Airtel Money</b> to <code>{html_escape(airtel_no)}</code>.\n"
-        f"🌍 <b>Other Countries:</b> Contact Admin <b>{BRAND_TAG}</b>.\n\n"
+        f"🪙 <b>International (Instant Auto-Delivery):</b> Pay via <b>CryptAPI Crypto</b> (USDT, BTC, ETH, SOL, TON, LTC & 100+ coins).\n"
+        f"🌍 <b>Other Methods:</b> Contact Admin <b>{BRAND_TAG}</b>.\n\n"
         f"📸 <i>After paying manually, send your payment screenshot (photo or PDF/file) here for confirmation & automatic delivery!</i>",
         {"inline_keyboard": kb_rows},
     )
@@ -2317,7 +3084,7 @@ async def show_admin_button_detail(chat_id, btn_id, message_id=None):
             f"Label: <b>{html_escape(b['label'])}</b>\n"
             f"Payment (KE PayHero / Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)}): <b>KES {int(b['price']):,}</b>\n"
             f"TZ / UG / ZM (Airtel): <code>{html_escape(get_setting('airtel_money_number', DEFAULT_AIRTEL_NUMBER))}</code>\n"
-            f"Other Countries: <b>Contact {BRAND_TAG}</b>\n"
+            f"International: <b>CryptAPI Crypto (~${kes_to_usd(b['price']):.2f}) / Contact {BRAND_TAG}</b>\n"
             f"VIP Days on Pay: <b>{days_str}</b>\n"
             f"Ticket Images Uploaded: <b>{img_count}</b>\n"
             f"Color: {style_name}\n"
@@ -2424,6 +3191,95 @@ async def show_post_button_picker(chat_id, user_id, picker, message_id=None):
         f"<b>Selected Buttons ({len(selected_names)}):</b>\n{summary}"
     )
     await edit_or_send(chat_id, message_id, text, {"inline_keyboard": rows})
+
+
+async def show_admin_cryptapi_panel(chat_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
+    coins, networks = await fetch_cryptapi_catalog()
+    wallets = get_cryptapi_wallets_map()
+    enabled_cnt = sum(1 for t in coins if get_wallet_for_ticker(t))
+
+    lines = [
+        "🪙 <b>CRYPTAPI INTERNATIONAL CRYPTO SETTINGS</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🌐 Callback Base: <code>{html_escape(get_cryptapi_callback_base())}</code>",
+        f"⛓️ Required Confirmations: <b>{html_escape(get_setting('cryptapi_confirmations', '1'))}</b>",
+        f"📊 Catalog Loaded: <b>{len(coins)} coins across {len(networks)} networks</b>",
+        f"✅ Enabled for Checkout: <b>{enabled_cnt} / {len(coins)}</b>",
+        "",
+        "<b>Configured Receiving Wallets:</b>",
+    ]
+    rows = []
+    for key, label, _ in CRYPTO_WALLET_GROUPS:
+        val = wallets.get(key, "")
+        short_val = f"<code>{html_escape(val[:8])}...{html_escape(val[-6:])}</code>" if len(val) > 16 else (f"<code>{html_escape(val)}</code>" if val else "<i>Not set</i>")
+        lines.append(f"{'✅' if val else '⬜'} <b>{key.upper()}</b>: {short_val}")
+        rows.append([{"text": f"{'✏️' if val else '➕'} Set {key.upper()} Wallet", "callback_data": f"admin:cry_set:{key}", "style": "success" if val else "primary"}])
+
+    rows.append([
+        {"text": "🎯 Set Specific Coin Override", "callback_data": "admin:cry_set_custom", "style": "primary"},
+        {"text": "🔄 Refresh CryptAPI Catalog", "callback_data": "admin:cry_refresh", "style": "success"},
+    ])
+    rows.append([{"text": "⬅️ Back to Settings", "callback_data": "admin:channels"}])
+    lines.append("\n<i>Tip: Setting 1 EVM (0x...) address enables ETH, ERC20, BEP20, Polygon, Arbitrum, Optimism, Base, AVAX, etc. Setting 1 TRON (T...) address enables TRX & TRC20-USDT!</i>")
+
+    await edit_or_send(chat_id, message_id, "\n".join(lines), {"inline_keyboard": rows})
+
+
+async def show_admin_payhero_diag(chat_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
+    cur_ch = get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID)
+    diag = await fetch_payhero_diagnostics()
+    ch_res = diag["channels"]
+    wal_res = diag["wallet"]
+
+    lines = [
+        "🩺 <b>PAYHERO DIAGNOSTICS</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🔢 Configured Channel ID: <code>{html_escape(str(cur_ch))}</code>",
+        f"🔗 Callback URL: <code>{html_escape(PUBLIC_URL.rstrip('/') + '/payhero/callback')}</code>",
+        "",
+    ]
+
+    # Wallet balance
+    w_status = wal_res.get("status")
+    w_data = wal_res.get("data")
+    if w_status == 200 and isinstance(w_data, dict):
+        bal = w_data.get("balance") or w_data.get("data", {}).get("balance") if isinstance(w_data.get("data"), dict) else w_data.get("balance")
+        lines.append(f"💰 Service Wallet: <b>HTTP 200</b> — Balance: <b>KES {html_escape(str(bal if bal is not None else w_data))}</b>")
+    else:
+        lines.append(f"❌ Service Wallet Check: <b>HTTP {w_status}</b> — <code>{html_escape(str(wal_res.get('error') or w_data)[:180])}</code>")
+
+    # Active channels
+    c_status = ch_res.get("status")
+    c_data = ch_res.get("data")
+    rows = []
+    if c_status == 200:
+        items = c_data if isinstance(c_data, list) else (c_data.get("channels") or c_data.get("data") or [] if isinstance(c_data, dict) else [])
+        lines.append(f"✅ Auth OK! Active Payment Channels (<b>{len(items)}</b>):")
+        found_match = False
+        for ch in items[:10]:
+            cid_val = ch.get("id") or ch.get("channel_id")
+            cname = ch.get("name") or ch.get("channel_type") or ch.get("short_code") or "Channel"
+            ctype = ch.get("channel_type") or ch.get("provider") or ""
+            is_cur = str(cid_val) == str(cur_ch)
+            if is_cur:
+                found_match = True
+            lines.append(f"  {'✅' if is_cur else '•'} ID <code>{cid_val}</code> — {html_escape(str(cname))} ({html_escape(str(ctype))})")
+            if cid_val and not is_cur:
+                rows.append([{"text": f"🔄 Switch to Channel ID {cid_val} ({cname})", "callback_data": f"admin:ph_use_ch:{cid_val}", "style": "success"}])
+        if items and not found_match:
+            lines.append("\n⚠️ <b>MISMATCH DETECTED:</b> Your current Channel ID does NOT match any active PayHero channel ID above! Tap a button below to switch it.")
+    else:
+        lines.append(f"❌ Channels Auth Check: <b>HTTP {c_status}</b> — <code>{html_escape(str(ch_res.get('error') or c_data)[:200])}</code>")
+        if c_status == 401:
+            lines.append("💡 HTTP 401 means <code>PAYHERO_AUTH_TOKEN</code> is invalid or expired. Copy the Basic Auth token from PayHero Dashboard → API Keys.")
+
+    rows.append([{"text": "🔄 Re-run Diagnostics", "callback_data": "admin:payhero_diag", "style": "primary"}])
+    rows.append([{"text": "⬅️ Back to Settings", "callback_data": "admin:channels"}])
+    await edit_or_send(chat_id, message_id, "\n".join(lines), {"inline_keyboard": rows})
 
 
 # --------------------------------------------------
@@ -2613,6 +3469,7 @@ async def handle_message(message):
                     "main_channel_id", "vip_channel_id", "main_channel_url",
                     "payhero_channel_id", "mpesa_till_number", "airtel_money_number",
                     "referral_reward_days", "vip_odds_info", "admin_contact_url", "website_url",
+                    "cryptapi_confirmations", "cryptapi_callback_base",
                 }
                 if len(parts) != 3 or parts[1] not in allowed:
                     await send_message(chat_id, f"Allowed keys: {', '.join(sorted(allowed))}")
@@ -2673,12 +3530,33 @@ async def handle_message(message):
             "WAIT_BTN_MEDIA", "WAIT_BTN_ADD_TICKET", "WAIT_BTN_ADD_PRICE",
             "WAIT_BTN_ADD_URL", "WAIT_BTN_SETPRICE", "WAIT_BTN_SETDAYS",
             "WAIT_BTN_RENAME", "WAIT_BTN_SETDESC", "WAIT_BROADCAST", "WAIT_PLAN_PRICE",
+            "WAIT_CRY_WALLET", "WAIT_CRY_CUSTOM_WALLET",
         }
         if state in admin_states:
             if not is_admin_private_chat(user_id, chat_id, chat_type):
                 clear_session(user_id)
                 await report_unauthorized_admin_attempt(user_id, f"SESSION:{state}")
                 await send_message(chat_id, "⛔ Access Denied.", main_menu_keyboard(user_id))
+                return
+
+            if state == "WAIT_CRY_WALLET":
+                clear_session(user_id)
+                addr = "" if text.lower() in ("clear", "none", "remove") else text.strip()
+                save_cryptapi_wallet(payload, addr)
+                log_audit(user_id, "SET_CRYPTAPI_WALLET", f"{payload}={'cleared' if not addr else 'updated'}")
+                await show_admin_cryptapi_panel(chat_id)
+                return
+
+            if state == "WAIT_CRY_CUSTOM_WALLET":
+                parts = [p.strip() for p in text.split("|", 1)]
+                if len(parts) != 2 or not parts[0]:
+                    await send_message(chat_id, "⚠️ Format: <code>ticker | wallet_address</code>\nExample: <code>trc20/usdt | TYourTronAddressHere</code>")
+                    return
+                clear_session(user_id)
+                addr = "" if parts[1].lower() in ("clear", "none", "remove") else parts[1].strip()
+                save_cryptapi_wallet(parts[0].lower(), addr)
+                log_audit(user_id, "SET_CRYPTAPI_CUSTOM", parts[0].lower())
+                await show_admin_cryptapi_panel(chat_id)
                 return
 
             if state == "WAIT_ADMIN_REPLY":
@@ -3128,6 +4006,11 @@ async def handle_callback(query):
         await send_message(chat_id, f"💬 <b>CONTACT ADMIN ({BRAND_TAG})</b>\n\nSend your message (or photo/file) below, or /cancel:")
         return
 
+    if data.startswith("openbtn:") and data.split(":", 1)[1].isdigit():
+        await answer_callback(cid)
+        await show_ticket_button_checkout(chat_id, user_id, int(data.split(":", 1)[1]))
+        return
+
     if data.startswith("plan:"):
         plan_name = data.split(":", 1)[1]
         plan = get_plan(plan_name)
@@ -3158,6 +4041,8 @@ async def handle_callback(query):
         if provider == "mpesa":
             set_session(user_id, "WAIT_MPESA_PHONE", plan_name)
             await send_message(chat_id, "📱 Enter your Kenyan Safaricom number (<code>0712345678</code>) or /cancel:")
+        elif provider == "crypto":
+            await show_crypto_checkout_menu(chat_id, user_id, plan_name, view="home")
         else:
             await create_manual_order_and_prompt(user_id, plan_name, provider)
         return
@@ -3180,8 +4065,51 @@ async def handle_callback(query):
                 f"📲 <b>Pay KES {int(b['price']):,} for {html_escape(b['label'])}</b>\n\n"
                 "Enter your Kenyan Safaricom number (e.g. <code>0712345678</code>) or /cancel:",
             )
+        elif method == "crypto":
+            await show_crypto_checkout_menu(chat_id, user_id, offer_key, view="home")
         else:
             await create_manual_order_and_prompt(user_id, offer_key, method)
+        return
+
+    if data.startswith("cryptolist|"):
+        parts = data.split("|")
+        if len(parts) == 4:
+            _, offer_key, view, pg = parts
+            await answer_callback(cid)
+            await show_crypto_checkout_menu(chat_id, user_id, offer_key, view=view, page=int(pg) if pg.isdigit() else 0, message_id=message_id)
+        return
+
+    if data.startswith("cryptopay|"):
+        parts = data.split("|", 2)
+        if len(parts) == 3:
+            _, offer_key, ticker = parts
+            await answer_callback(cid, "Generating deposit address...")
+            await start_cryptapi_payment(user_id, chat_id, offer_key, ticker)
+        return
+
+    if data.startswith("cryptocheck:"):
+        ext_ref = data.split(":", 1)[1]
+        with connect_db() as db:
+            order = db.execute("SELECT * FROM orders WHERE external_ref=? AND user_id=?", (ext_ref, user_id)).fetchone()
+        if not order:
+            await answer_callback(cid, "Order not found")
+            return
+        if order["status"] == "PAID":
+            await answer_callback(cid, "Already paid!")
+            return
+        await answer_callback(cid, "Checking blockchain...")
+        try:
+            res = await verify_cryptapi_order_via_logs(order)
+            if res == "NO_TX":
+                await send_message(
+                    chat_id,
+                    f"⏳ No incoming transaction detected yet for <code>{ext_ref}</code>.\n"
+                    f"Send <code>{order['crypto_amount']}</code> to <code>{order['crypto_address_in']}</code> and check again in 30–60s.",
+                )
+            elif res == "PENDING_CONFIRMATION":
+                await send_message(chat_id, f"⏳ Transaction detected for <code>{ext_ref}</code> — waiting for blockchain confirmation!")
+        except Exception:
+            await send_message(chat_id, "⚠️ Could not query CryptAPI logs right now. Try again shortly.")
         return
 
     if data.startswith("manualtill:"):
@@ -3340,617 +4268,4 @@ async def handle_callback(query):
             await answer_callback(cid)
             res = await publish_match_batch("VIP", selected_btn_ids=[], include_footer=True, include_reactions=False)
             await send_message(chat_id, "✅ Published queued VIP matches!" if res else "ℹ️ No queued VIP matches.", admin_keyboard(user_id))
-        elif action == "res" and len(parts) == 4:
-            await answer_callback(cid)
-            mid, new_res = int(parts[2]), parts[3]
-            with connect_db() as db:
-                db.execute("UPDATE matches SET result=? WHERE id=?", (new_res, mid))
-            log_audit(user_id, "SET_MATCH_RESULT", f"{mid}={new_res}")
-            await sync_channel_message_for_match(mid)
-            await show_admin_matches(chat_id, user_id)
-        elif action == "accums":
-            await answer_callback(cid)
-            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
-        elif action == "accum_pub" and len(parts) == 4 and parts[2].isdigit():
-            aid, target = int(parts[2]), parts[3].upper()
-            await answer_callback(cid, f"Publishing #{aid} to {target}...")
-            await publish_accumulator_to_channel(aid, target=target)
-            log_audit(user_id, "PUBLISH_ACCUM", f"#{aid} -> {target}")
-            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
-        elif action == "accum_rej" and len(parts) == 3 and parts[2].isdigit():
-            aid = int(parts[2])
-            with connect_db() as db:
-                db.execute("UPDATE accumulators SET status='REJECTED' WHERE id=?", (aid,))
-            log_audit(user_id, "REJECT_ACCUM", f"#{aid}")
-            await answer_callback(cid, f"Rejected #{aid}")
-            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
-        elif action == "transactions":
-            await answer_callback(cid)
-            await show_admin_transactions(chat_id, user_id, message_id=message_id)
-        elif action == "viewproof" and len(parts) == 3:
-            ext_ref = parts[2]
-            with connect_db() as db:
-                o = db.execute("SELECT * FROM orders WHERE external_ref=?", (ext_ref,)).fetchone()
-            await answer_callback(cid)
-            if not o or not o["proof_file_id"]:
-                await send_message(chat_id, f"ℹ️ No uploaded photo/PDF proof for <code>{html_escape(ext_ref)}</code>.")
-            else:
-                cap = (
-                    f"👁️ <b>PAYMENT PROOF — {html_escape(ext_ref)}</b>\n"
-                    f"👤 User: <code>{o['user_id']}</code>\n"
-                    f"🎫 Item: <b>{html_escape(format_order_item_name(o['plan']))}</b> — {html_escape(o['local_amount'] or str(o['amount']))}"
-                )
-                kb = {
-                    "inline_keyboard": [[
-                        {"text": "✅ Confirm & Deliver Now", "callback_data": f"admin:approve:{ext_ref}", "style": "success"},
-                        {"text": "❌ Reject", "callback_data": f"admin:reject:{ext_ref}", "style": "danger"},
-                    ]]
-                }
-                if o["proof_type"] == "document":
-                    await telegram("sendDocument", {"chat_id": chat_id, "document": o["proof_file_id"], "caption": cap, "parse_mode": "HTML", "reply_markup": kb})
-                else:
-                    await telegram("sendPhoto", {"chat_id": chat_id, "photo": o["proof_file_id"], "caption": cap, "parse_mode": "HTML", "reply_markup": kb})
-        elif action == "approve" and len(parts) == 3:
-            await answer_callback(cid, "Confirmed & Delivering")
-            with connect_db() as db:
-                order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
-            if order:
-                res = await finalize_paid_order(order, manual_admin=True)
-                log_audit(user_id, "APPROVE_ORDER", parts[2])
-                await send_message(chat_id, f"✅ Confirmed & delivered <code>{html_escape(parts[2])}</code> ({res}).", {"inline_keyboard": [[{"text": "🧾 Back to Transactions", "callback_data": "admin:transactions", "style": "primary"}]]})
-        elif action == "reject" and len(parts) == 3:
-            await answer_callback(cid, "Rejected")
-            with connect_db() as db:
-                order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
-                db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=?", (parts[2],))
-            log_audit(user_id, "REJECT_ORDER", parts[2])
-            if order:
-                try:
-                    await send_message(int(order["user_id"]), f"❌ Payment confirmation for <code>{parts[2]}</code> was rejected. Contact {BRAND_TAG} if you need help.")
-                except Exception:
-                    pass
-            await send_message(chat_id, f"🚫 Rejected <code>{html_escape(parts[2])}</code>.", {"inline_keyboard": [[{"text": "🧾 Back to Transactions", "callback_data": "admin:transactions", "style": "primary"}]]})
-        elif action == "users":
-            await answer_callback(cid)
-            await show_admin_users(chat_id, user_id)
-        elif action == "buttons":
-            await answer_callback(cid)
-            await show_admin_buttons(chat_id, message_id=message_id)
-        elif action == "btn_view" and len(parts) == 3 and parts[2].isdigit():
-            await answer_callback(cid)
-            await show_admin_button_detail(chat_id, int(parts[2]), message_id=message_id)
-        elif action == "btn_media" and len(parts) == 3 and parts[2].isdigit():
-            clear_session(user_id)
-            await answer_callback(cid)
-            await show_admin_button_media(chat_id, int(parts[2]), message_id=message_id)
-        elif action == "btn_media_add" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            b = get_custom_button(bid)
-            await answer_callback(cid)
-            if b:
-                set_session(user_id, "WAIT_BTN_MEDIA", str(bid))
-                await send_message(
-                    chat_id,
-                    f"🖼️ <b>UPLOAD TICKET IMAGES — {html_escape(b['label'])}</b>\n\n"
-                    "Send one or more <b>ticket photos</b> (with optional caption) right here.\n"
-                    "Every paying buyer will receive these images automatically once confirmed!\n\n"
-                    "Tap /done when finished (or /cancel).",
-                )
-        elif action == "btn_media_prev" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            b = get_custom_button(bid)
-            await answer_callback(cid)
-            if b:
-                sent = await send_offer_ticket_media(chat_id, f"btn:{bid}", b["label"])
-                if sent == 0:
-                    await send_message(chat_id, "No images saved yet.")
-        elif action == "btn_media_clr" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            with connect_db() as db:
-                db.execute("DELETE FROM ticket_media WHERE offer_key=?", (f"btn:{bid}",))
-            log_audit(user_id, "CLEAR_TICKET_MEDIA", f"btn:{bid}")
-            await answer_callback(cid, "Cleared all images")
-            await show_admin_button_media(chat_id, bid, message_id=message_id)
-        elif action == "btn_add_ticket":
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_ADD_TICKET")
-            await send_message(
-                chat_id,
-                "➕ <b>ADD TICKET PAYMENT BUTTON</b>\n\n"
-                "Send the button details in this format:\n"
-                "<code>Button Name | Price in KES | VIP Days</code>\n\n"
-                "Examples:\n"
-                "<code>🔵 Get Blue Ticket | 500 | 1</code>\n"
-                "<code>💎 Diamond Ticket | 2000 | 0</code> <i>(0 days = deliver ticket images only)</i>\n\n"
-                "Or just send the <b>Button Name</b> and I will ask for the price next (or /cancel):",
-            )
-        elif action == "btn_add_url":
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_ADD_URL")
-            await send_message(
-                chat_id,
-                "🔗 <b>ADD LINK BUTTON (URL)</b>\n\n"
-                "Send in this format:\n<code>Button Label | https://example.com</code>\n\n(or /cancel)",
-            )
-        elif action == "btn_setprice" and len(parts) == 3 and parts[2].isdigit():
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_SETPRICE", parts[2])
-            await send_message(chat_id, "💰 Enter the new <b>KES price</b> (e.g. <code>500</code>, or <code>0</code> for Contact Admin only):")
-        elif action == "btn_setdays" and len(parts) == 3 and parts[2].isdigit():
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_SETDAYS", parts[2])
-            await send_message(chat_id, "📅 Enter <b>VIP access days</b> granted after payment (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket images delivery only):")
-        elif action == "btn_rename" and len(parts) == 3 and parts[2].isdigit():
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_RENAME", parts[2])
-            await send_message(chat_id, "✏️ Send the new button label (e.g. <code>🔵 Get Blue Ticket</code>):")
-        elif action == "btn_setdesc" and len(parts) == 3 and parts[2].isdigit():
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BTN_SETDESC", parts[2])
-            await send_message(chat_id, "📝 Send the description shown when users tap this ticket button:")
-        elif action == "btn_style" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            b = get_custom_button(bid)
-            if b:
-                cur_style = b["style"] if b["style"] in BUTTON_STYLES else "primary"
-                next_style = BUTTON_STYLES[(BUTTON_STYLES.index(cur_style) + 1) % len(BUTTON_STYLES)]
-                with connect_db() as db:
-                    db.execute("UPDATE custom_buttons SET style=? WHERE id=?", (next_style, bid))
-                await answer_callback(cid, f"Color: {next_style}")
-                await show_admin_button_detail(chat_id, bid, message_id=message_id)
-            else:
-                await answer_callback(cid)
-        elif action == "btn_del" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            b = get_custom_button(bid)
-            await answer_callback(cid)
-            if b:
-                await edit_or_send(
-                    chat_id,
-                    message_id,
-                    f"🗑️ Are you sure you want to remove <b>{html_escape(b['label'])}</b>?",
-                    {
-                        "inline_keyboard": [[
-                            {"text": "✅ Yes, Remove", "callback_data": f"admin:btn_del_yes:{bid}", "style": "danger"},
-                            {"text": "❌ Cancel", "callback_data": f"admin:btn_view:{bid}", "style": "primary"},
-                        ]]
-                    },
-                )
-        elif action == "btn_del_yes" and len(parts) == 3 and parts[2].isdigit():
-            bid = int(parts[2])
-            with connect_db() as db:
-                db.execute("DELETE FROM custom_buttons WHERE id=?", (bid,))
-            log_audit(user_id, "DELETE_BTN", str(bid))
-            await answer_callback(cid, "Button removed")
-            await show_admin_buttons(chat_id, message_id=message_id)
-        elif action == "post_channel":
-            await answer_callback(cid)
-            await show_post_button_picker(chat_id, user_id, {"mode": "custom", "btn_ids": [], "footer": True, "react": True})
-        elif action == "post_vip_channel":
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_VIP_CHANNEL_POST")
-            await send_message(
-                chat_id,
-                f"💎 <b>POST TO VIP CHANNEL</b> (<code>{html_escape(get_setting('vip_channel_id', VIP_CHANNEL_ID))}</code>)\n\n"
-                "Send your VIP picks text, or send a ticket image/photo with caption right now (or /cancel):",
-            )
-        elif action == "post":
-            await answer_callback(cid)
-            await show_post_button_picker(chat_id, user_id, {"mode": "vip_promo", "btn_ids": [], "footer": True, "react": True})
-        elif action == "broadcast":
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_BROADCAST")
-            await send_message(chat_id, "📣 Send broadcast text or photo+caption:")
-        elif action == "reply" and len(parts) == 3:
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_ADMIN_REPLY", parts[2])
-            await send_message(chat_id, f"💬 Type reply to user <code>{parts[2]}</code>:")
-        elif action == "packages":
-            await answer_callback(cid)
-            await show_admin_packages(chat_id)
-        elif action == "editprice" and len(parts) == 3:
-            await answer_callback(cid)
-            set_session(user_id, "WAIT_PLAN_PRICE", parts[2])
-            await send_message(chat_id, f"💰 Enter new KES price for <b>{parts[2]}</b>:")
-        elif action == "channels":
-            await answer_callback(cid)
-            await show_admin_settings(chat_id, message_id=message_id)
-        elif action == "toggle_autoshot":
-            cur = get_setting("auto_confirm_screenshot", "0")
-            nxt = "0" if cur == "1" else "1"
-            set_setting("auto_confirm_screenshot", nxt)
-            log_audit(user_id, "TOGGLE_AUTOSHOT", nxt)
-            await answer_callback(cid, f"Screenshot Auto-Deliver: {'ON' if nxt == '1' else 'OFF'}")
-            await show_admin_settings(chat_id, message_id=message_id)
-        elif action == "export":
-            await answer_callback(cid)
-            await export_csv_backups(chat_id)
-        elif action == "audit":
-            await answer_callback(cid)
-            with connect_db() as db:
-                logs = db.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15").fetchall()
-            txt = "🛡️ <b>RECENT AUDIT LOGS</b>\n\n" + ("\n".join(f"• {l['action']} by <code>{l['actor_id']}</code>: {html_escape(l['details'])}" for l in logs) or "No logs yet.")
-            await send_message(chat_id, txt, admin_keyboard(user_id))
-        else:
-            await answer_callback(cid)
-        return
-
-
-# --------------------------------------------------
-# ADMIN HELPERS & CSV EXPORT (ADMIN CHAT ONLY)
-# --------------------------------------------------
-
-async def show_admin_settings(chat_id, message_id=None):
-    if str(chat_id) != str(ADMIN_USER_ID):
-        return
-    auto_shot = get_setting("auto_confirm_screenshot", "0") == "1"
-    till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
-    airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
-    ref_days = get_setting("referral_reward_days", "2")
-    txt = (
-        "⚙️ <b>CHANNELS & PAYMENT SETTINGS</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"📢 Main Channel: <code>{html_escape(get_setting('main_channel_id'))}</code>\n"
-        f"💎 VIP Channel: <code>{html_escape(get_setting('vip_channel_id'))}</code>\n"
-        f"🏪 Kenya Manual Till: <code>{html_escape(till_no)}</code>\n"
-        f"🔴 TZ/UG/ZM Airtel Money: <code>{html_escape(airtel_no)}</code>\n"
-        f"🎁 Referral Reward: <b>{html_escape(ref_days)} day(s) VIP</b>\n"
-        f"🌐 Website: <code>{html_escape(get_website_url())}</code>\n"
-        f"📸 Screenshot Auto-Deliver: <b>{'🟢 ON (Instant upon upload)' if auto_shot else '🔒 OFF (1-Tap Admin Confirm)'}</b>\n\n"
-        "Use <code>/setsetting &lt;key&gt; &lt;value&gt;</code> to update values."
-    )
-    kb = {
-        "inline_keyboard": [
-            [{"text": f"📸 Screenshot Auto-Deliver: {'ON' if auto_shot else 'OFF'}", "callback_data": "admin:toggle_autoshot", "style": "success" if auto_shot else "primary"}],
-            [{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}],
-        ]
-    }
-    await edit_or_send(chat_id, message_id, txt, kb)
-
-
-async def show_admin_stats(chat_id, user_id):
-    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        users_cnt = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
-        vip_cnt = db.execute("SELECT COUNT(*) AS n FROM subscriptions WHERE status='ACTIVE'").fetchone()["n"]
-        paid_cnt = db.execute("SELECT COUNT(*) AS n FROM orders WHERE status='PAID'").fetchone()["n"]
-        rev = db.execute("SELECT COALESCE(SUM(amount),0) AS n FROM orders WHERE status='PAID'").fetchone()["n"]
-    await send_message(
-        chat_id,
-        f"📊 <b>{PROJECT_NAME} OVERVIEW</b>\n"
-        f"🗄 DB: {'PostgreSQL ✅' if USE_POSTGRES else 'SQLite'}\n"
-        f"👤 Users: <b>{users_cnt}</b> | 👑 Active VIPs: <b>{vip_cnt}</b>\n"
-        f"✅ Paid Orders: <b>{paid_cnt}</b> | 💰 Revenue: <b>KES {rev:,}</b>",
-        admin_keyboard(user_id),
-    )
-
-
-async def show_admin_matches(chat_id, user_id):
-    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        qf = db.execute("SELECT COUNT(*) AS n FROM matches WHERE tier='FREE' AND publish_status='QUEUED'").fetchone()["n"]
-        qv = db.execute("SELECT COUNT(*) AS n FROM matches WHERE tier='VIP' AND publish_status='QUEUED'").fetchone()["n"]
-        recent = db.execute("SELECT * FROM matches ORDER BY id DESC LIMIT 6").fetchall()
-    rows = [
-        [
-            {"text": f"📢 Post FREE ({qf})", "callback_data": "admin:pub_free", "style": "success"},
-            {"text": f"💎 Post VIP ({qv})", "callback_data": "admin:pub_vip", "style": "danger"},
-        ]
-    ]
-    txt = "⚽ <b>FIXTURES & MATCHES</b>\nAdd: <code>/addmatch FREE | Team A vs Team B | 1X2 | Home Win | 1.85 | 2026-11-15 | 19:45 UTC</code>\n\n"
-    for m in recent:
-        txt += f"• #{m['id']} [{m['tier']}] {html_escape(m['match_name'])} — {m['result']}\n"
-        rows.append([
-            {"text": f"#{m['id']} ✅Won", "callback_data": f"admin:res:{m['id']}:WON", "style": "success"},
-            {"text": "❌Lost", "callback_data": f"admin:res:{m['id']}:LOST", "style": "danger"},
-            {"text": "⚪Void", "callback_data": f"admin:res:{m['id']}:VOID", "style": "primary"},
-        ])
-    rows.append([{"text": "⬅️ Admin", "callback_data": "admin:home"}])
-    await send_message(chat_id, txt, {"inline_keyboard": rows})
-
-
-async def show_admin_accumulators(chat_id, user_id, message_id=None):
-    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        accums = db.execute("SELECT * FROM accumulators ORDER BY id DESC LIMIT 6").fetchall()
-
-    lines = []
-    rows = []
-    for a in accums:
-        try:
-            sels = json.loads(a["selections_json"])
-        except Exception:
-            sels = []
-        legs_summary = ", ".join(f"{s.get('match')} ({s.get('tip')})" for s in sels[:4])
-        if len(sels) > 4:
-            legs_summary += f" +{len(sels) - 4} more"
-        lines.append(
-            f"• <b>#{a['id']} [{html_escape(a['category'])}] {html_escape(str(a['total_odds']))}x</b> — <code>{html_escape(a['status'])}</code>\n"
-            f"   <i>{html_escape(legs_summary)}</i>"
-        )
-        btn_row = [
-            {"text": f"📢 Main #{a['id']}", "callback_data": f"admin:accum_pub:{a['id']}:MAIN", "style": "success"},
-            {"text": f"💎 VIP #{a['id']}", "callback_data": f"admin:accum_pub:{a['id']}:VIP", "style": "primary"},
-        ]
-        if a["status"] == "PENDING_ADMIN":
-            btn_row.append({"text": "❌ Reject", "callback_data": f"admin:accum_rej:{a['id']}", "style": "danger"})
-        rows.append(btn_row)
-
-    rows.append([{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}])
-    txt = "🎯 <b>ACCUMULATOR TICKETS</b>\n━━━━━━━━━━━━━━━━━━━━\n\n" + ("\n\n".join(lines) if lines else "No tickets submitted yet.")
-    await edit_or_send(chat_id, message_id, txt, {"inline_keyboard": rows})
-
-
-async def show_admin_transactions(chat_id, user_id, message_id=None):
-    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        pending = db.execute("SELECT * FROM orders WHERE status IN ('PENDING_REVIEW','PENDING_PROOF') ORDER BY created_at DESC LIMIT 6").fetchall()
-        orders = db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 10").fetchall()
-
-    rows = []
-    pending_lines = []
-    for o in pending:
-        item = format_order_item_name(o["plan"])
-        amt = o["local_amount"] or f"KES {o['amount']}"
-        pending_lines.append(f"• <code>{o['external_ref']}</code> 👤<code>{o['user_id']}</code> | {html_escape(item)} ({html_escape(amt)}) [{o['status']}]")
-        action_row = [
-            {"text": f"✅ Approve {o['external_ref']}", "callback_data": f"admin:approve:{o['external_ref']}", "style": "success"},
-            {"text": "❌ Reject", "callback_data": f"admin:reject:{o['external_ref']}", "style": "danger"},
-        ]
-        if o["proof_file_id"]:
-            action_row.append({"text": "👁️ Proof", "callback_data": f"admin:viewproof:{o['external_ref']}", "style": "primary"})
-        rows.append(action_row)
-
-    recent_lines = [
-        f"• <code>{o['external_ref']}</code> {html_escape(format_order_item_name(o['plan']))} {html_escape(o['local_amount'] or str(o['amount']))} [{o['status']}]"
-        for o in orders
-    ]
-    rows.append([{"text": "🔄 Refresh", "callback_data": "admin:transactions", "style": "primary"}, {"text": "⬅️ Admin", "callback_data": "admin:home"}])
-
-    txt = ""
-    if pending_lines:
-        txt += "⏳ <b>PENDING REVIEW / PROOF</b>\n" + "\n".join(pending_lines) + "\n\n"
-    txt += "🧾 <b>RECENT TRANSACTIONS</b>\n" + ("\n".join(recent_lines) if recent_lines else "No transactions yet.")
-    await edit_or_send(chat_id, message_id, txt, {"inline_keyboard": rows})
-
-
-async def show_admin_users(chat_id, user_id):
-    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        users = db.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT 10").fetchall()
-    txt = "👥 <b>RECENT USERS</b>\n\n" + "\n".join(f"• <code>{u['user_id']}</code> @{u['username'] or u['first_name']} [{u['country'] or 'Unconfirmed'}/{u['currency']}]" for u in users)
-    await send_message(chat_id, txt, admin_keyboard(user_id))
-
-
-async def show_admin_packages(chat_id):
-    if str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
-    rows = [[{"text": f"✏️ {p['title']} (KES {p['price']})", "callback_data": f"admin:editprice:{p['name']}", "style": "primary"}] for p in plans]
-    rows.append([{"text": "⬅️ Admin", "callback_data": "admin:home"}])
-    await send_message(chat_id, "💰 <b>MANAGE VIP PLANS</b>", {"inline_keyboard": rows})
-
-
-async def export_csv_backups(chat_id):
-    if str(chat_id) != str(ADMIN_USER_ID):
-        return
-    with connect_db() as db:
-        orders = db.execute("SELECT * FROM orders ORDER BY created_at DESC").fetchall()
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["external_ref", "user_id", "plan", "amount_kes", "currency", "local_amount", "provider", "status", "receipt", "created_at"])
-    for o in orders:
-        w.writerow([o["external_ref"], o["user_id"], format_order_item_name(o["plan"]), o["amount"], o["currency"], o["local_amount"], o["provider"], o["status"], o["mpesa_receipt"], o["created_at"]])
-    await telegram_send_document(chat_id, "prime_tips_empire_orders.csv", buf.getvalue().encode("utf-8"), "📦 Orders CSV Backup")
-
-
-# --------------------------------------------------
-# BACKGROUND WORKER & FASTAPI WEBHOOKS / PORTAL
-# --------------------------------------------------
-
-async def background_worker():
-    global bot_username
-    for attempt in range(5):
-        try:
-            me = await telegram("getMe", {})
-            bot_username = me["username"]
-            await telegram("setWebhook", {
-                "url": PUBLIC_URL.rstrip("/") + "/telegram",
-                "secret_token": WEBHOOK_SECRET,
-                "allowed_updates": ["message", "callback_query"],
-            })
-            log.info("%s started as @%s", PROJECT_NAME, bot_username)
-            break
-        except Exception:
-            log.exception("Webhook setup failed (%s/5)", attempt + 1)
-            await asyncio.sleep(5)
-
-    while True:
-        try:
-            await refresh_exchange_rates(force=False)
-
-            cutoff_iso = (utcnow() - timedelta(minutes=30)).isoformat()
-            with connect_db() as db:
-                pending_stk = db.execute(
-                    "SELECT * FROM orders WHERE status='PENDING' AND provider='mpesa' AND payhero_reference IS NOT NULL AND created_at>=?",
-                    (cutoff_iso,),
-                ).fetchall()
-            for o in pending_stk:
-                try:
-                    verified = await verify_payhero_transaction(o["payhero_reference"])
-                    await finalize_paid_order(o, verified=verified)
-                except Exception:
-                    pass
-
-            now_iso = utcnow().isoformat()
-            remind_iso = (utcnow() + timedelta(hours=12)).isoformat()
-            with connect_db() as db:
-                reminds = db.execute("SELECT * FROM subscriptions WHERE status='ACTIVE' AND is_lifetime=0 AND reminded=0 AND expires_at>? AND expires_at<=?", (now_iso, remind_iso)).fetchall()
-                expired = db.execute("SELECT * FROM subscriptions WHERE status='ACTIVE' AND is_lifetime=0 AND expires_at<=?", (now_iso,)).fetchall()
-            for r in reminds:
-                with connect_db() as db:
-                    db.execute("UPDATE subscriptions SET reminded=1 WHERE user_id=?", (r["user_id"],))
-                try:
-                    await send_message(r["user_id"], f"⏳ Your {PROJECT_NAME} VIP membership expires soon. Use /start to renew.")
-                except Exception:
-                    pass
-            vip_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID)
-            for e in expired:
-                try:
-                    await telegram("banChatMember", {"chat_id": vip_chat, "user_id": e["user_id"]})
-                    await telegram("unbanChatMember", {"chat_id": vip_chat, "user_id": e["user_id"], "only_if_banned": True})
-                except Exception:
-                    pass
-                with connect_db() as db:
-                    db.execute("UPDATE subscriptions SET status='EXPIRED' WHERE user_id=?", (e["user_id"],))
-        except Exception:
-            log.exception("Background worker error")
-        await asyncio.sleep(120)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global http_client
-    check_settings()
-    init_db()
-    http_client = httpx.AsyncClient(timeout=35)
-    try:
-        await ensure_bot_username()
-    except Exception:
-        pass
-    worker = asyncio.create_task(background_worker())
-    try:
-        yield
-    finally:
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
-        if http_client and not http_client.is_closed:
-            await http_client.aclose()
-
-
-app = FastAPI(lifespan=lifespan)
-cors_origins = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
-if PUBLIC_URL and PUBLIC_URL.rstrip("/") not in cors_origins:
-    cors_origins.append(PUBLIC_URL.rstrip("/"))
-app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-
-@app.get("/")
-async def home():
-    return {"status": f"{PROJECT_NAME} running", "brand": BRAND_TAG, "storage": "postgresql" if USE_POSTGRES else "sqlite"}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy", "storage": "postgresql" if USE_POSTGRES else "sqlite"}
-
-
-@app.get("/api/packages")
-async def api_packages(currency: str = Query(default="KES")):
-    curr = currency.upper() if currency.upper() in CURRENCIES else "KES"
-    with connect_db() as db:
-        plans = db.execute("SELECT name,title,price,days,benefits,is_lifetime FROM plans ORDER BY price").fetchall()
-    out = []
-    for p in plans:
-        d = dict(p)
-        d["display_price"], d["converted"] = format_converted_price(p["price"], curr)
-        out.append(d)
-    return {"currency": curr, "packages": out}
-
-
-@app.get("/api/predictions")
-async def api_predictions():
-    with connect_db() as db:
-        free = db.execute("SELECT id,match_name,market,tip,odds,match_date,kickoff_time,result FROM matches WHERE tier='FREE' AND publish_status='PUBLISHED' ORDER BY id DESC LIMIT 15").fetchall()
-        won = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='WON'").fetchone()["n"]
-        lost = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='LOST'").fetchone()["n"]
-    dec = won + lost
-    return {"win_rate": round(won / dec * 100, 1) if dec else None, "free_predictions": [dict(r) for r in free]}
-
-
-@app.get("/app", response_class=HTMLResponse)
-async def empire_portal():
-    bot_link = f"https://t.me/{bot_username}?start=vip" if bot_username else "#"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{PROJECT_NAME} • {BRAND_TAG}</title>
-<style>
-  body{{margin:0;font-family:system-ui,sans-serif;background:radial-gradient(circle at top,#1e1b4b,#06070d 65%);color:#f8fafc;min-height:100vh;padding:16px}}
-  .hero{{background:linear-gradient(135deg,rgba(15,23,42,.92),rgba(30,27,75,.9));border:1px solid rgba(245,158,11,.45);border-radius:20px;padding:20px;box-shadow:0 0 28px rgba(124,58,237,.35)}}
-  h1{{margin:0 0 4px;font-size:24px;background:linear-gradient(90deg,#f59e0b,#10b981,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
-  .card{{background:#0d142b;border:1px solid #1e293b;border-radius:14px;padding:14px;margin-top:12px}}
-  select{{width:100%;margin-top:10px;padding:10px;border-radius:10px;background:#0f172a;color:#f8fafc;border:1px solid #334155}}
-  .btn{{display:block;text-align:center;margin-top:14px;padding:13px;border-radius:12px;background:linear-gradient(90deg,#f59e0b,#7c3aed);color:#fff;font-weight:800;text-decoration:none}}
-</style>
-</head>
-<body>
-  <div class="hero">
-    <h1>👑 {PROJECT_NAME}</h1>
-    <div style="color:#94a3b8;font-size:13px">International Football Analytics & VIP Platform • {BRAND_TAG}</div>
-    <select id="currSel" onchange="loadPortal(this.value)">
-      {''.join(f'<option value="{c}">{c}</option>' for c in CURRENCIES)}
-    </select>
-  </div>
-  <div id="portalBody" class="card">Loading predictions & currency prices...</div>
-  <a class="btn" href="{bot_link}">⚡ Join VIP in Telegram</a>
-<script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m]));
-function loadPortal(curr){{
-  Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages?currency='+curr).then(r=>r.json())])
-  .then(([p,pkg])=>{{
-    let h=`<div><b>Verified Win Rate:</b> ${{esc(p.win_rate ?? 'Tracking')}}%</div><h3>⚽ Today's Free Predictions</h3>`;
-    if(!p.free_predictions.length) h+=`<p style="color:#94a3b8">No free picks published yet.</p>`;
-    p.free_predictions.forEach(m=>{{h+=`<div class="card"><b>${{esc(m.match_name)}}</b><br>🎯 ${{esc(m.market)}}: ${{esc(m.tip)}} | 📈 ${{esc(m.odds)}} | ${{esc(m.result)}}</div>`;}});
-    h+=`<h3 style="margin-top:16px">👑 VIP Plans (${{esc(pkg.currency)}})</h3>`;
-    pkg.packages.forEach(x=>{{h+=`<div class="card"><b>${{esc(x.title)}}</b> — <span style="color:#f59e0b">${{esc(x.display_price)}}</span><br><small style="color:#94a3b8">${{esc(x.benefits)}}</small></div>`;}});
-    document.getElementById('portalBody').innerHTML=h;
-  }});
-}}
-loadPortal('KES');
-</script>
-</body>
-</html>"""
-
-
-@app.post("/telegram")
-async def telegram_webhook(request: Request):
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not secrets.compare_digest(secret, WEBHOOK_SECRET):
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    update = await request.json()
-    try:
-        if "message" in update:
-            await handle_message(update["message"])
-        elif "callback_query" in update:
-            await handle_callback(update["callback_query"])
-    except Exception:
-        log.exception("Telegram update processing failed")
-    return {"ok": True}
-
-
-@app.post("/payhero/callback")
-async def payhero_callback(request: Request):
-    payload = await request.json()
-    try:
-        await process_payhero_callback(payload)
-    except Exception:
-        log.exception("PayHero callback failed")
-        raise HTTPException(status_code=503, detail="Verification failed")
-    return {"ok": True}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
-```
+        elif action == "res" and len(parts) ==
