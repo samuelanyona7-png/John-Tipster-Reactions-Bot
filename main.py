@@ -47,7 +47,6 @@ def env_str(name, default=""):
 
 BOT_TOKEN = env_str("TELEGRAM_BOT_TOKEN")
 ADMIN_USER_ID = env_str("ADMIN_USER_ID")
-STAFF_USER_IDS = {x.strip() for x in env_str("STAFF_USER_IDS").split(",") if x.strip().isdigit()}
 CHANNEL_ID = env_str("CHANNEL_ID")
 VIP_CHANNEL_ID = env_str("VIP_CHANNEL_ID")
 MAIN_CHANNEL_URL = env_str("MAIN_CHANNEL_URL")
@@ -91,7 +90,7 @@ COUNTRIES = {
             f"1️⃣ <b>M-Pesa STK Push (PayHero)</b> for instant automatic checkout.\n"
             f"2️⃣ Or pay manually via <b>Lipa na M-Pesa Buy Goods Till: <code>{DEFAULT_MPESA_TILL}</code></b>.\n"
             f"3️⃣ Or use <b>Airtel Money: <code>{DEFAULT_AIRTEL_NUMBER}</code></b>.\n"
-            "4️⃣ Share your payment screenshot for confirmation & automatic delivery."
+            "4️⃣ Share your payment screenshot or PDF receipt for confirmation & automatic delivery."
         ),
     },
     "TZ": {
@@ -99,7 +98,7 @@ COUNTRIES = {
         "methods": ["airtel", "mpesa_tz", "tigo"],
         "how": (
             f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for M-Pesa TZ / Mixx by Yas).\n"
-            "2️⃣ Send the payment screenshot here for confirmation.\n"
+            "2️⃣ Send the payment screenshot or receipt file here for confirmation.\n"
             "3️⃣ Receive your ticket / VIP automatically once confirmed."
         ),
     },
@@ -108,7 +107,7 @@ COUNTRIES = {
         "methods": ["airtel", "mtn"],
         "how": (
             f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
-            "2️⃣ Send your payment screenshot here for confirmation.\n"
+            "2️⃣ Send your payment screenshot or receipt file here for confirmation.\n"
             "3️⃣ Receive your ticket / VIP automatically once confirmed."
         ),
     },
@@ -117,54 +116,54 @@ COUNTRIES = {
         "methods": ["airtel", "mtn"],
         "how": (
             f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
-            "2️⃣ Send your payment screenshot here for confirmation.\n"
+            "2️⃣ Send your payment screenshot or receipt file here for confirmation.\n"
             "3️⃣ Receive your ticket / VIP automatically once confirmed."
         ),
     },
     "NG": {
         "flag": "🇳🇬", "name": "Nigeria", "currency": "NGN", "tz": "Africa/Lagos",
         "methods": ["ng_bank"],
-        "how": "1️⃣ Select Nigeria Bank / OPay / PalmPay.\n2️⃣ Contact @isla_olivia0 for Naira transfer details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select Nigeria Bank / OPay / PalmPay.\n2️⃣ Contact @isla_olivia0 for Naira transfer details.\n3️⃣ Send payment screenshot or PDF receipt here for confirmation.",
     },
     "GH": {
         "flag": "🇬🇭", "name": "Ghana", "currency": "GHS", "tz": "Africa/Accra",
         "methods": ["airtel", "mtn"],
-        "how": f"1️⃣ Select AirtelTigo Money (<code>{DEFAULT_AIRTEL_NUMBER}</code>) or MTN MoMo via @isla_olivia0.\n2️⃣ Send payment screenshot here for confirmation.",
+        "how": f"1️⃣ Select AirtelTigo Money (<code>{DEFAULT_AIRTEL_NUMBER}</code>) or MTN MoMo via @isla_olivia0.\n2️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "ZA": {
         "flag": "🇿🇦", "name": "South Africa", "currency": "ZAR", "tz": "Africa/Johannesburg",
         "methods": ["za_eft"],
-        "how": "1️⃣ Select Instant EFT / Capitec.\n2️⃣ Contact @isla_olivia0 for EFT details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select Instant EFT / Capitec.\n2️⃣ Contact @isla_olivia0 for EFT details.\n3️⃣ Send payment screenshot or PDF receipt here for confirmation.",
     },
     "US": {
         "flag": "🇺🇸", "name": "United States", "currency": "USD", "tz": "America/New_York",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select International Card / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for checkout details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select International Card / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for checkout details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "GB": {
         "flag": "🇬🇧", "name": "United Kingdom", "currency": "GBP", "tz": "Europe/London",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select UK Bank / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select UK Bank / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "EU": {
         "flag": "🇪🇺", "name": "Europe (Eurozone)", "currency": "EUR", "tz": "Europe/Berlin",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select SEPA / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select SEPA / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "IN": {
         "flag": "🇮🇳", "name": "India", "currency": "INR", "tz": "Asia/Kolkata",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select UPI / International Transfer / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select UPI / International Transfer / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "CA": {
         "flag": "🇨🇦", "name": "Canada", "currency": "CAD", "tz": "America/Toronto",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select Interac / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select Interac / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
     "AU": {
         "flag": "🇦🇺", "name": "Australia", "currency": "AUD", "tz": "Australia/Sydney",
         "methods": ["intl_transfer"],
-        "how": "1️⃣ Select PayID / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+        "how": "1️⃣ Select PayID / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot or receipt file here for confirmation.",
     },
 }
 
@@ -246,6 +245,18 @@ async def get_http():
     if http_client is None or http_client.is_closed:
         http_client = httpx.AsyncClient(timeout=35)
     return http_client
+
+
+# --------------------------------------------------
+# STRICT ADMIN ACCESS CONTROL (ADMIN ONLY)
+# --------------------------------------------------
+
+def is_admin(user_id):
+    return bool(ADMIN_USER_ID) and ADMIN_USER_ID.isdigit() and str(user_id) == str(ADMIN_USER_ID)
+
+
+def is_admin_private_chat(user_id, chat_id, chat_type="private"):
+    return is_admin(user_id) and chat_type == "private" and str(chat_id) == str(ADMIN_USER_ID)
 
 
 # --------------------------------------------------
@@ -368,6 +379,7 @@ def init_db():
                 checkout_id TEXT,
                 mpesa_receipt TEXT,
                 proof_file_id TEXT,
+                proof_type TEXT NOT NULL DEFAULT 'photo',
                 created_at TEXT NOT NULL
             )
         """)
@@ -495,6 +507,7 @@ def init_db():
         ensure_column(db, "orders", "provider", "TEXT NOT NULL DEFAULT 'mpesa'")
         ensure_column(db, "orders", "mpesa_receipt", "TEXT")
         ensure_column(db, "orders", "proof_file_id", "TEXT")
+        ensure_column(db, "orders", "proof_type", "TEXT NOT NULL DEFAULT 'photo'")
         ensure_column(db, "orders", "currency", "TEXT NOT NULL DEFAULT 'KES'")
         ensure_column(db, "orders", "local_amount", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "subscriptions", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
@@ -594,14 +607,6 @@ def get_website_url():
     if url and not url.startswith(("http://", "https://")):
         url = "https://" + url
     return url
-
-
-def is_super_admin(user_id):
-    return str(user_id) == str(ADMIN_USER_ID)
-
-
-def is_staff(user_id):
-    return is_super_admin(user_id) or str(user_id) in STAFF_USER_IDS
 
 
 def get_user(user_id):
@@ -930,6 +935,21 @@ async def answer_callback(callback_id, text=""):
         log.exception("Could not answer callback")
 
 
+async def report_unauthorized_admin_attempt(user_id, context_label):
+    log_audit(user_id, "UNAUTHORIZED_ADMIN_ATTEMPT", context_label)
+    try:
+        u = get_user(user_id)
+        uname = f"@{u['username']}" if (u and u["username"]) else str(user_id)
+        await send_message(
+            ADMIN_USER_ID,
+            f"🚨 <b>UNAUTHORIZED ADMIN ACCESS BLOCKED</b>\n"
+            f"👤 User: {html_escape(uname)} (<code>{user_id}</code>)\n"
+            f"🔎 Attempt: <code>{html_escape(context_label)}</code>",
+        )
+    except Exception:
+        pass
+
+
 # --------------------------------------------------
 # KEYBOARDS (MENU + GENUINE REACTIONS + CHANNEL BUTTONS)
 # --------------------------------------------------
@@ -965,7 +985,7 @@ def main_menu_keyboard(user_id=None):
         ],
         [portal_btn],
     ]
-    if user_id and is_staff(user_id):
+    if user_id and is_admin(user_id):
         rows.append([{"text": "⚡ ADMIN DASHBOARD", "callback_data": "admin:home", "style": "danger"}])
     return {"inline_keyboard": rows}
 
@@ -1127,6 +1147,8 @@ def channel_post_keyboard(channel_msg_id=None, selected_btn_ids=None, include_fo
 
 
 def admin_keyboard(user_id):
+    if not is_admin(user_id):
+        return {"inline_keyboard": []}
     rows = [
         [
             {"text": "📊 Overview & Stats", "callback_data": "admin:stats", "style": "primary"},
@@ -1148,22 +1170,21 @@ def admin_keyboard(user_id):
             {"text": "📢 VIP Promo Post", "callback_data": "admin:post", "style": "primary"},
             {"text": "📣 Broadcast", "callback_data": "admin:broadcast", "style": "danger"},
         ],
-    ]
-    if is_super_admin(user_id):
-        rows.append([
+        [
             {"text": "💰 Manage VIP Plans", "callback_data": "admin:packages", "style": "success"},
             {"text": "⚙️ Channels & Settings", "callback_data": "admin:channels", "style": "primary"},
-        ])
-        rows.append([
+        ],
+        [
             {"text": "📥 Export CSV", "callback_data": "admin:export", "style": "success"},
             {"text": "🛡️ Audit Logs", "callback_data": "admin:audit", "style": "primary"},
-        ])
-    rows.append([{"text": "🏠 Main Menu", "callback_data": "menu:home"}])
+        ],
+        [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+    ]
     return {"inline_keyboard": rows}
 
 
 # --------------------------------------------------
-# PAYMENTS (PayHero STK + Till 6076817 Fallback + Airtel +254754490056 + Screenshots)
+# PAYMENTS (PayHero STK + Till 6076817 Fallback + Airtel +254754490056 + Screenshots/PDF)
 # --------------------------------------------------
 
 def payhero_headers():
@@ -1223,10 +1244,10 @@ async def send_manual_till_fallback(user_id, external_ref, item_title, amount, r
         f"1️⃣ Go to <b>M-Pesa → Lipa na M-Pesa → Buy Goods and Services</b>\n"
         f"2️⃣ Enter Till Number: <code>{html_escape(till_no)}</code>\n"
         f"3️⃣ Enter Amount: <b>KES {int(amount):,}</b> & enter your M-Pesa PIN\n\n"
-        f"📸 <b>After paying, send your M-Pesa payment screenshot (photo) right here</b> for confirmation & automatic delivery!",
+        f"📸 <b>After paying, send your payment screenshot (photo or PDF/file) right here</b> for confirmation & automatic delivery!",
         {
             "inline_keyboard": [
-                [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                [{"text": "📸 Send Payment Screenshot / PDF", "callback_data": f"proof:{external_ref}", "style": "success"}],
                 [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
                 [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
             ]
@@ -1272,10 +1293,10 @@ async def create_manual_order_and_prompt(user_id, plan_name, method_key):
             f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
             f"📝 <b>How to Pay (Tanzania / Uganda / Zambia / Kenya):</b>\n"
             f"1️⃣ Send <b>{html_escape(local_str)}</b> via Airtel Money to <code>{html_escape(airtel_no)}</code>\n"
-            f"2️⃣ <b>Send your payment screenshot (photo) right here</b> after paying for confirmation & automatic delivery!",
+            f"2️⃣ <b>Send your payment screenshot (photo or PDF/file) right here</b> after paying for confirmation & automatic delivery!",
             {
                 "inline_keyboard": [
-                    [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                    [{"text": "📸 Send Payment Screenshot / PDF", "callback_data": f"proof:{external_ref}", "style": "success"}],
                     [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
                     [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
                 ]
@@ -1283,7 +1304,6 @@ async def create_manual_order_and_prompt(user_id, plan_name, method_key):
         )
         return
 
-    # Other methods (MTN, M-Pesa TZ, Tigo, NG Bank, ZA EFT, International)
     await send_message(
         user_id,
         f"💳 <b>{html_escape(method_key.upper())} PAYMENT</b>\n"
@@ -1292,11 +1312,11 @@ async def create_manual_order_and_prompt(user_id, plan_name, method_key):
         f"💰 Amount: <b>{html_escape(local_str)}</b>\n"
         f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
         f"1️⃣ Contact Admin <b>{BRAND_TAG}</b> for payment details.\n"
-        f"2️⃣ <b>Send your payment screenshot (photo)</b> (or <code>Phone/Email | TransactionID</code>) right here after paying!",
+        f"2️⃣ <b>Send your payment screenshot (photo or PDF/file)</b> (or <code>Phone/Email | TransactionID</code>) right here after paying!",
         {
             "inline_keyboard": [
                 [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
-                [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                [{"text": "📸 Send Payment Screenshot / PDF", "callback_data": f"proof:{external_ref}", "style": "success"}],
                 [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
             ]
         },
@@ -1397,12 +1417,12 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
                 f"📞 Phone: <code>{html_escape(phone)}</code>\n"
                 f"🔗 Ref: <code>{external_ref}</code>\n\n"
                 "🔐 Enter your M-Pesa PIN on your phone. Your ticket/VIP activates automatically!\n"
-                f"<i>If you don't see the PIN prompt, tap <b>Pay via Till {html_escape(till_no)}</b> or upload your screenshot below.</i>",
+                f"<i>If you don't see the PIN prompt, tap <b>Pay via Till {html_escape(till_no)}</b> or upload your screenshot/PDF below.</i>",
                 {
                     "inline_keyboard": [
                         [{"text": "🔄 Verify Payment Status", "callback_data": f"verify:{external_ref}", "style": "success"}],
                         [{"text": f"🏪 Use Till {till_no} Instead", "callback_data": f"manualtill:{external_ref}", "style": "primary"}],
-                        [{"text": "📸 Upload Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "primary"}],
+                        [{"text": "📸 Upload Payment Screenshot / PDF", "callback_data": f"proof:{external_ref}", "style": "primary"}],
                         [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
                     ]
                 },
@@ -1433,7 +1453,7 @@ async def verify_payhero_transaction(reference):
 
 
 # --------------------------------------------------
-# VIP ACCESS, TICKET IMAGE DELIVERY & ORDER FINALIZATION
+# VIP ACCESS, TICKET IMAGE DELIVERY, REFERRALS & ORDER FINALIZATION
 # --------------------------------------------------
 
 async def send_offer_ticket_media(user_id, offer_key, title, receipt=None):
@@ -1481,7 +1501,6 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
     receipt_line = f"🧾 Receipt: <code>{html_escape(receipt)}</code>\n" if receipt else ""
 
-    # Deliver any uploaded ticket images automatically first
     delivered_media = await send_offer_ticket_media(user_id, plan_name, display_title, receipt=receipt)
 
     if days <= 0 and not is_lifetime:
@@ -1563,6 +1582,45 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
         await send_message(ADMIN_USER_ID, f"⚠️ VIP activated for <code>{user_id}</code>, invite creation failed.")
 
 
+async def reward_referrer_if_eligible(payer_user_id):
+    payer = get_user(payer_user_id)
+    if not payer or not payer["referred_by"] or payer["referral_rewarded"]:
+        return
+    referrer_id = int(payer["referred_by"])
+    if referrer_id == int(payer_user_id) or not get_user(referrer_id):
+        return
+
+    with connect_db() as db:
+        cur = db.execute(
+            "UPDATE users SET referral_rewarded=1 WHERE user_id=? AND referral_rewarded=0",
+            (int(payer_user_id),),
+        )
+        if cur.rowcount == 0:
+            return
+
+    try:
+        reward_days = int(get_setting("referral_reward_days", "2") or "2")
+    except ValueError:
+        reward_days = 2
+
+    if reward_days > 0:
+        try:
+            await give_vip_access(
+                referrer_id,
+                f"referral-{reward_days}d",
+                days_override=reward_days,
+                title_override=f"🎁 Referral Bonus (+{reward_days} Days VIP)",
+            )
+            await send_message(
+                referrer_id,
+                f"🎁 <b>REFERRAL REWARD EARNED!</b>\n"
+                f"A member you invited just completed a payment — you received <b>+{reward_days} Day(s) of VIP Access</b>!",
+            )
+            log_audit(referrer_id, "REFERRAL_REWARD", f"from_user={payer_user_id} +{reward_days}d")
+        except Exception:
+            log.exception("Referral payout failed for referrer %s", referrer_id)
+
+
 async def finalize_paid_order(order, verified=None, callback_data=None, manual_admin=False):
     external_ref = order["external_ref"]
     if not manual_admin:
@@ -1620,6 +1678,8 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
     else:
         await give_vip_access(int(order["user_id"]), order["plan"], receipt=receipt, title_override=item_title)
 
+    await reward_referrer_if_eligible(int(order["user_id"]))
+
     amt_display = order["local_amount"] or f"KES {order['amount']}"
     await send_message(
         ADMIN_USER_ID,
@@ -1644,7 +1704,7 @@ async def process_payhero_callback(payload):
     await finalize_paid_order(order, verified=verified, callback_data=data)
 
 
-async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, photo_file_id):
+async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, photo_file_id, doc_file_id=None):
     with connect_db() as db:
         order = db.execute("SELECT * FROM orders WHERE external_ref=? AND user_id=?", (external_ref, user_id)).fetchone()
     if not order:
@@ -1654,15 +1714,25 @@ async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, 
         await send_message(chat_id, "✅ This order is already confirmed and delivered!", main_menu_keyboard(user_id))
         return
 
-    if not photo_file_id and not text:
-        await send_message(chat_id, "⚠️ Please send your payment screenshot (photo) or transaction details.")
+    media_fid = photo_file_id or doc_file_id
+    media_kind = "photo" if photo_file_id else ("document" if doc_file_id else "text")
+
+    if not media_fid and not text:
+        await send_message(chat_id, "⚠️ Please send your payment screenshot (photo), PDF/file receipt, or transaction code.")
         return
 
-    receipt_note = text[:120] if text else "SCREENSHOT"
+    receipt_note = text[:120] if text else ("DOCUMENT" if doc_file_id else "SCREENSHOT")
     with connect_db() as db:
         db.execute(
-            "UPDATE orders SET status='PENDING_REVIEW', proof_file_id=COALESCE(?, proof_file_id), mpesa_receipt=? WHERE external_ref=?",
-            (photo_file_id, receipt_note, external_ref),
+            """
+            UPDATE orders
+            SET status='PENDING_REVIEW',
+                proof_file_id=COALESCE(?, proof_file_id),
+                proof_type=?,
+                mpesa_receipt=?
+            WHERE external_ref=?
+            """,
+            (media_fid, media_kind, receipt_note, external_ref),
         )
         order = db.execute("SELECT * FROM orders WHERE external_ref=?", (external_ref,)).fetchone()
 
@@ -1671,10 +1741,10 @@ async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, 
     u = get_user(user_id)
     uname = f"@{u['username']}" if (u and u["username"]) else (u["first_name"] if u else str(user_id))
 
-    auto_deliver = get_setting("auto_confirm_screenshot", "0") == "1" and bool(photo_file_id)
+    auto_deliver = get_setting("auto_confirm_screenshot", "0") == "1" and bool(media_fid)
 
     admin_caption = (
-        f"📸 <b>PAYMENT SCREENSHOT {'(AUTO-DELIVERED)' if auto_deliver else 'FOR CONFIRMATION'}</b>\n\n"
+        f"📸 <b>PAYMENT PROOF ({media_kind.upper()}) {'(AUTO-DELIVERED)' if auto_deliver else 'FOR CONFIRMATION'}</b>\n\n"
         f"👤 User: {html_escape(uname)} (<code>{user_id}</code>)\n"
         f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
         f"💰 Amount: <b>{html_escape(amt_display)}</b>\n"
@@ -1705,6 +1775,14 @@ async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, 
             "parse_mode": "HTML",
             **({"reply_markup": admin_kb} if admin_kb else {}),
         })
+    elif doc_file_id:
+        await telegram("sendDocument", {
+            "chat_id": ADMIN_USER_ID,
+            "document": doc_file_id,
+            "caption": admin_caption[:1020],
+            "parse_mode": "HTML",
+            **({"reply_markup": admin_kb} if admin_kb else {}),
+        })
     else:
         await send_message(ADMIN_USER_ID, admin_caption, admin_kb)
 
@@ -1713,7 +1791,7 @@ async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, 
     else:
         await send_message(
             chat_id,
-            "✅ <b>PAYMENT SCREENSHOT RECEIVED!</b>\n\n"
+            "✅ <b>PAYMENT PROOF RECEIVED!</b>\n\n"
             f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
             f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
             "⏳ Confirming your payment now — once confirmed, you will <b>automatically receive</b> your ticket images & VIP access right here!",
@@ -1899,6 +1977,72 @@ async def publish_vip_channel_post(text_body="", photo_file_id=None):
     })
 
 
+async def publish_accumulator_to_channel(accum_id, target="MAIN"):
+    await ensure_bot_username()
+    with connect_db() as db:
+        a = db.execute("SELECT * FROM accumulators WHERE id=?", (int(accum_id),)).fetchone()
+    if not a:
+        return None
+
+    try:
+        sels = json.loads(a["selections_json"])
+    except Exception:
+        sels = []
+
+    legs_text = "\n".join(
+        f"<b>{i + 1}.</b> ⚽ <b>{html_escape(s.get('match', ''))}</b>\n"
+        f"    🎯 Tip: <b>{html_escape(s.get('tip', ''))}</b>  |  📈 Odds: <b>{html_escape(str(s.get('odds', '')))}</b>"
+        for i, s in enumerate(sels)
+    )
+    risk = a["risk_note"] or "Multi-leg accumulators carry higher variance (never guaranteed)."
+    is_vip = (target.upper() == "VIP")
+    target_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID) if is_vip else get_setting("main_channel_id", CHANNEL_ID)
+
+    msg_text = (
+        f"🎯 <b>{PROJECT_NAME} — {'VIP ' if is_vip else ''}ACCUMULATOR TICKET #{a['id']}</b> ({BRAND_TAG})\n"
+        f"📊 Category: <b>{html_escape(a['category'])}</b>  |  📈 Combined Odds: <b>{html_escape(str(a['total_odds']))}x</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{legs_text}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ <i>{html_escape(risk)}</i>\n"
+        f"🔥 <b>{PROJECT_NAME} ({BRAND_TAG})</b>"
+    )
+
+    msg = await telegram("sendMessage", {
+        "chat_id": target_chat,
+        "parse_mode": "HTML",
+        "text": msg_text[:4090],
+        "reply_markup": channel_post_keyboard(selected_btn_ids=[], include_footer=not is_vip, include_reactions=False),
+        "disable_web_page_preview": True,
+    })
+    msg_id = msg["message_id"]
+    save_channel_post_meta(msg_id, [], not is_vip, not is_vip)
+
+    if not is_vip:
+        try:
+            await telegram("editMessageReplyMarkup", {
+                "chat_id": target_chat,
+                "message_id": msg_id,
+                "reply_markup": channel_post_keyboard(channel_msg_id=msg_id),
+            })
+        except Exception:
+            pass
+
+    new_status = "PUBLISHED_VIP" if is_vip else "PUBLISHED_MAIN"
+    with connect_db() as db:
+        db.execute("UPDATE accumulators SET status=?, channel_msg_id=? WHERE id=?", (new_status, msg_id, int(accum_id)))
+
+    if int(a["created_by"]) != int(ADMIN_USER_ID):
+        try:
+            await send_message(
+                int(a["created_by"]),
+                f"🎉 Your Accumulator Ticket <b>#{a['id']}</b> ({html_escape(str(a['total_odds']))}x) was published to the <b>{'VIP' if is_vip else 'Main'} Channel</b>!",
+            )
+        except Exception:
+            pass
+    return msg
+
+
 # --------------------------------------------------
 # USER VIEWS (WELCOME, COUNTRY, TICKET CHECKOUT, ACCUM, VIP, STATS)
 # --------------------------------------------------
@@ -1972,7 +2116,7 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         kb_rows.append([{"text": f"🏪 Kenya: Manual M-Pesa Till {till_no}", "callback_data": f"buybtn:{b['id']}:mpesa_till", "style": "primary"}])
         kb_rows.append([{"text": f"🔴 TZ / UG / ZM: Airtel Money ({airtel_no})", "callback_data": f"buybtn:{b['id']}:airtel", "style": "danger"}])
         kb_rows.append([{"text": f"🌍 Other Countries: Contact {BRAND_TAG}", "url": contact_url, "style": "primary"}])
-        kb_rows.append([{"text": "📸 Send Payment Screenshot", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
+        kb_rows.append([{"text": "📸 Send Payment Screenshot / PDF", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
     else:
         kb_rows.append([{"text": f"💬 Contact {BRAND_TAG} to Get Ticket", "url": contact_url, "style": "success"}])
     kb_rows.append([{"text": "🏠 Main Menu", "callback_data": "menu:home"}])
@@ -1987,7 +2131,7 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         f"🇰🇪 <b>Kenya:</b> Use instant <b>M-Pesa STK Push (PayHero)</b> OR pay manually to Buy Goods Till <code>{html_escape(till_no)}</code>.\n"
         f"🇹🇿🇺🇬🇿🇲 <b>Tanzania, Uganda & Zambia:</b> Send via <b>Airtel Money</b> to <code>{html_escape(airtel_no)}</code>.\n"
         f"🌍 <b>Other Countries:</b> Contact Admin <b>{BRAND_TAG}</b>.\n\n"
-        f"📸 <i>After paying manually, send your payment screenshot here for confirmation & automatic delivery!</i>",
+        f"📸 <i>After paying manually, send your payment screenshot (photo or PDF/file) here for confirmation & automatic delivery!</i>",
         {"inline_keyboard": kb_rows},
     )
 
@@ -2107,10 +2251,12 @@ async def show_stats_and_results(chat_id, user_id, only_settled=False):
 
 
 # --------------------------------------------------
-# ADMIN BUTTONS MANAGER, TICKET IMAGES & BUTTON PICKER
+# ADMIN BUTTONS MANAGER, TICKET IMAGES & BUTTON PICKER (ADMIN ONLY)
 # --------------------------------------------------
 
 async def show_admin_buttons(chat_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     buttons = get_all_custom_buttons(only_active=False)
     lines = []
     rows = []
@@ -2140,6 +2286,8 @@ async def show_admin_buttons(chat_id, message_id=None):
 
 
 async def show_admin_button_detail(chat_id, btn_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     b = get_custom_button(btn_id)
     if not b:
         await show_admin_buttons(chat_id, message_id)
@@ -2195,6 +2343,8 @@ async def show_admin_button_detail(chat_id, btn_id, message_id=None):
 
 
 async def show_admin_button_media(chat_id, btn_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     b = get_custom_button(btn_id)
     if not b:
         await show_admin_buttons(chat_id, message_id)
@@ -2220,6 +2370,8 @@ async def show_admin_button_media(chat_id, btn_id, message_id=None):
 
 
 async def show_post_button_picker(chat_id, user_id, picker, message_id=None):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
     set_session(user_id, "POST_PICKER", json.dumps(picker))
     buttons = get_all_custom_buttons(only_active=True)
     selected = set(int(x) for x in picker.get("btn_ids", []))
@@ -2280,8 +2432,13 @@ async def show_post_button_picker(chat_id, user_id, picker, message_id=None):
 
 async def handle_message(message):
     user = message.get("from", {})
+    if not user or user.get("is_bot"):
+        return
     user_id = user.get("id")
-    chat_id = message.get("chat", {}).get("id")
+    chat_obj = message.get("chat", {})
+    chat_id = chat_obj.get("id")
+    chat_type = chat_obj.get("type", "private")
+
     photo_list = message.get("photo") or []
     photo_file_id = photo_list[-1]["file_id"] if photo_list else None
     doc_obj = message.get("document")
@@ -2299,7 +2456,7 @@ async def handle_message(message):
 
     register_user(user, referred_by=referred_by)
     db_user = get_user(user_id)
-    if db_user and db_user["is_blocked"] and not is_super_admin(user_id):
+    if db_user and db_user["is_blocked"] and not is_admin(user_id):
         await send_message(chat_id, "🚫 Your account has been suspended.")
         return
 
@@ -2354,109 +2511,116 @@ async def handle_message(message):
             await show_main_menu(chat_id, user_id)
             return
 
-        if cmd == "/done" and is_staff(user_id):
-            sess = get_session(user_id)
-            if sess and sess["state"] == "WAIT_BTN_MEDIA":
-                btn_id = int(sess["payload"])
+        admin_cmds = {"/admin", "/done", "/reply", "/addmatch", "/setprice", "/grant", "/revoke", "/export", "/setsetting"}
+        if cmd in admin_cmds:
+            if not is_admin(user_id):
+                await report_unauthorized_admin_attempt(user_id, f"CMD:{cmd}")
+                await send_message(chat_id, "⛔ Access Denied. Admin Dashboard is restricted to the Admin only.")
+                return
+            if not is_admin_private_chat(user_id, chat_id, chat_type):
+                await send_message(chat_id, "🔒 For security, admin commands only work in private DM with the bot.")
+                return
+
+            if cmd == "/admin":
+                await send_message(chat_id, f"⚡ <b>{PROJECT_NAME} ADMIN</b> ({BRAND_TAG})", admin_keyboard(user_id))
+                return
+
+            if cmd == "/done":
+                sess = get_session(user_id)
+                if sess and sess["state"] == "WAIT_BTN_MEDIA":
+                    btn_id = int(sess["payload"])
+                    clear_session(user_id)
+                    await show_admin_button_media(chat_id, btn_id)
+                    return
                 clear_session(user_id)
-                await show_admin_button_media(chat_id, btn_id)
+                await send_message(chat_id, "✅ Done.", admin_keyboard(user_id))
                 return
-            clear_session(user_id)
-            await send_message(chat_id, "✅ Done.", admin_keyboard(user_id))
-            return
 
-        if cmd == "/admin":
-            if not is_staff(user_id):
-                await send_message(chat_id, "⛔ Unauthorized.")
+            if cmd == "/reply":
+                parts = text.split(None, 2)
+                if len(parts) < 3 or not parts[1].isdigit():
+                    await send_message(chat_id, "Usage: <code>/reply &lt;user_id&gt; &lt;message&gt;</code>")
+                    return
+                await send_message(int(parts[1]), f"💬 <b>ADMIN REPLY ({BRAND_TAG})</b>\n\n{html_escape(parts[2])}")
+                await send_message(chat_id, "✅ Reply sent.")
                 return
-            await send_message(chat_id, f"⚡ <b>{PROJECT_NAME} ADMIN</b> ({BRAND_TAG})", admin_keyboard(user_id))
-            return
 
-        if cmd == "/reply" and is_staff(user_id):
-            parts = text.split(None, 2)
-            if len(parts) < 3 or not parts[1].isdigit():
-                await send_message(chat_id, "Usage: <code>/reply &lt;user_id&gt; &lt;message&gt;</code>")
+            if cmd == "/addmatch":
+                raw = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ""
+                parts = [p.strip() for p in raw.split("|")]
+                if len(parts) < 7 or parts[0].upper() not in ("FREE", "VIP"):
+                    await send_message(
+                        chat_id,
+                        "Usage:\n<code>/addmatch FREE | Arsenal vs Chelsea | Over 2.5 Goals | Over 2.5 | 1.85 | 2026-11-15 | 19:45 UTC</code>",
+                    )
+                    return
+                tier, mname, market, tip, odds, mdate, ktime = parts[:7]
+                with connect_db() as db:
+                    db.execute(
+                        "INSERT INTO matches(tier,match_name,market,tip,odds,match_date,kickoff_time,publish_status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (tier.upper(), mname, market, tip, odds, mdate, ktime, "QUEUED", utcnow().isoformat()),
+                    )
+                log_audit(user_id, "ADD_MATCH", mname)
+                await send_message(chat_id, "✅ Match queued. Open Admin → Fixtures & Matches to publish.")
                 return
-            await send_message(int(parts[1]), f"💬 <b>ADMIN REPLY ({BRAND_TAG})</b>\n\n{html_escape(parts[2])}")
-            await send_message(chat_id, "✅ Reply sent.")
-            return
 
-        if cmd == "/addmatch" and is_staff(user_id):
-            raw = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ""
-            parts = [p.strip() for p in raw.split("|")]
-            if len(parts) < 7 or parts[0].upper() not in ("FREE", "VIP"):
-                await send_message(
-                    chat_id,
-                    "Usage:\n<code>/addmatch FREE | Arsenal vs Chelsea | Over 2.5 Goals | Over 2.5 | 1.85 | 2026-11-15 | 19:45 UTC</code>",
-                )
+            if cmd == "/setprice":
+                parts = text.split()
+                if len(parts) != 3 or not parts[2].isdigit() or not get_plan(parts[1].lower()):
+                    await send_message(chat_id, "Usage: <code>/setprice monthly 1000</code>")
+                    return
+                with connect_db() as db:
+                    db.execute("UPDATE plans SET price=? WHERE name=?", (int(parts[2]), parts[1].lower()))
+                log_audit(user_id, "SET_PRICE", f"{parts[1]}={parts[2]}")
+                await send_message(chat_id, f"✅ Updated {parts[1]} to KES {parts[2]}.")
                 return
-            tier, mname, market, tip, odds, mdate, ktime = parts[:7]
-            with connect_db() as db:
-                db.execute(
-                    "INSERT INTO matches(tier,match_name,market,tip,odds,match_date,kickoff_time,publish_status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (tier.upper(), mname, market, tip, odds, mdate, ktime, "QUEUED", utcnow().isoformat()),
-                )
-            log_audit(user_id, "ADD_MATCH", mname)
-            await send_message(chat_id, "✅ Match queued. Open Admin → Fixtures & Matches to publish.")
-            return
 
-        if cmd == "/setprice" and is_super_admin(user_id):
-            parts = text.split()
-            if len(parts) != 3 or not parts[2].isdigit() or not get_plan(parts[1].lower()):
-                await send_message(chat_id, "Usage: <code>/setprice monthly 1000</code>")
+            if cmd == "/grant":
+                parts = text.split()
+                if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+                    await send_message(chat_id, "Usage: <code>/grant &lt;user_id&gt; &lt;days&gt;</code>")
+                    return
+                await give_vip_access(int(parts[1]), f"{parts[2]}-day", days_override=int(parts[2]))
+                log_audit(user_id, "GRANT_VIP", f"{parts[1]} for {parts[2]}d")
+                await send_message(chat_id, "✅ VIP granted.")
                 return
-            with connect_db() as db:
-                db.execute("UPDATE plans SET price=? WHERE name=?", (int(parts[2]), parts[1].lower()))
-            log_audit(user_id, "SET_PRICE", f"{parts[1]}={parts[2]}")
-            await send_message(chat_id, f"✅ Updated {parts[1]} to KES {parts[2]}.")
-            return
 
-        if cmd == "/grant" and is_super_admin(user_id):
-            parts = text.split()
-            if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
-                await send_message(chat_id, "Usage: <code>/grant &lt;user_id&gt; &lt;days&gt;</code>")
+            if cmd == "/revoke":
+                parts = text.split()
+                if len(parts) != 2 or not parts[1].isdigit():
+                    await send_message(chat_id, "Usage: <code>/revoke &lt;user_id&gt;</code>")
+                    return
+                uid = int(parts[1])
+                vip_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID)
+                try:
+                    await telegram("banChatMember", {"chat_id": vip_chat, "user_id": uid})
+                    await telegram("unbanChatMember", {"chat_id": vip_chat, "user_id": uid, "only_if_banned": True})
+                except Exception:
+                    pass
+                with connect_db() as db:
+                    db.execute("UPDATE subscriptions SET status='EXPIRED' WHERE user_id=?", (uid,))
+                log_audit(user_id, "REVOKE_VIP", str(uid))
+                await send_message(chat_id, "🚫 VIP revoked.")
                 return
-            await give_vip_access(int(parts[1]), f"{parts[2]}-day", days_override=int(parts[2]))
-            log_audit(user_id, "GRANT_VIP", f"{parts[1]} for {parts[2]}d")
-            await send_message(chat_id, "✅ VIP granted.")
-            return
 
-        if cmd == "/revoke" and is_super_admin(user_id):
-            parts = text.split()
-            if len(parts) != 2 or not parts[1].isdigit():
-                await send_message(chat_id, "Usage: <code>/revoke &lt;user_id&gt;</code>")
+            if cmd == "/export":
+                await export_csv_backups(chat_id)
                 return
-            uid = int(parts[1])
-            vip_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID)
-            try:
-                await telegram("banChatMember", {"chat_id": vip_chat, "user_id": uid})
-                await telegram("unbanChatMember", {"chat_id": vip_chat, "user_id": uid, "only_if_banned": True})
-            except Exception:
-                pass
-            with connect_db() as db:
-                db.execute("UPDATE subscriptions SET status='EXPIRED' WHERE user_id=?", (uid,))
-            log_audit(user_id, "REVOKE_VIP", str(uid))
-            await send_message(chat_id, "🚫 VIP revoked.")
-            return
 
-        if cmd == "/export" and is_super_admin(user_id):
-            await export_csv_backups(chat_id)
-            return
-
-        if cmd == "/setsetting" and is_super_admin(user_id):
-            parts = text.split(None, 2)
-            allowed = {
-                "main_channel_id", "vip_channel_id", "main_channel_url",
-                "payhero_channel_id", "mpesa_till_number", "airtel_money_number",
-                "vip_odds_info", "admin_contact_url", "website_url",
-            }
-            if len(parts) != 3 or parts[1] not in allowed:
-                await send_message(chat_id, f"Allowed keys: {', '.join(sorted(allowed))}")
+            if cmd == "/setsetting":
+                parts = text.split(None, 2)
+                allowed = {
+                    "main_channel_id", "vip_channel_id", "main_channel_url",
+                    "payhero_channel_id", "mpesa_till_number", "airtel_money_number",
+                    "referral_reward_days", "vip_odds_info", "admin_contact_url", "website_url",
+                }
+                if len(parts) != 3 or parts[1] not in allowed:
+                    await send_message(chat_id, f"Allowed keys: {', '.join(sorted(allowed))}")
+                    return
+                set_setting(parts[1], parts[2].strip())
+                log_audit(user_id, "SET_SETTING", parts[1])
+                await send_message(chat_id, f"✅ Saved <code>{parts[1]}</code>.")
                 return
-            set_setting(parts[1], parts[2].strip())
-            log_audit(user_id, "SET_SETTING", parts[1])
-            await send_message(chat_id, f"✅ Saved <code>{parts[1]}</code>.")
-            return
 
         await send_message(chat_id, "❓ Unknown command.", main_menu_keyboard(user_id))
         return
@@ -2489,7 +2653,7 @@ async def handle_message(message):
 
         if state == "WAIT_PAYMENT_PROOF":
             clear_session(user_id)
-            await handle_payment_proof_submission(user_id, chat_id, payload, text, photo_file_id)
+            await handle_payment_proof_submission(user_id, chat_id, payload, text, photo_file_id, doc_file_id=doc_file_id)
             return
 
         if state == "WAIT_SUPPORT_MSG":
@@ -2497,207 +2661,222 @@ async def handle_message(message):
             kb = {"inline_keyboard": [[{"text": "💬 Reply", "callback_data": f"admin:reply:{user_id}", "style": "primary"}]]}
             if photo_file_id:
                 await telegram("sendPhoto", {"chat_id": ADMIN_USER_ID, "photo": photo_file_id, "caption": f"📩 Support photo from <code>{user_id}</code>\n{html_escape(text)}"[:1020], "parse_mode": "HTML", "reply_markup": kb})
+            elif doc_file_id:
+                await telegram("sendDocument", {"chat_id": ADMIN_USER_ID, "document": doc_file_id, "caption": f"📩 Support file from <code>{user_id}</code>\n{html_escape(text)}"[:1020], "parse_mode": "HTML", "reply_markup": kb})
             else:
                 await send_message(ADMIN_USER_ID, f"📩 <b>SUPPORT MESSAGE</b>\nFrom: <code>{user_id}</code>\n\n{html_escape(text)}", kb)
             await send_message(chat_id, f"✅ Sent to admin ({BRAND_TAG}).", main_menu_keyboard(user_id))
             return
 
-        if state == "WAIT_ADMIN_REPLY" and is_staff(user_id):
-            clear_session(user_id)
-            await send_message(int(payload), f"💬 <b>ADMIN REPLY ({BRAND_TAG})</b>\n\n{html_escape(text)}")
-            await send_message(chat_id, "✅ Reply sent.", admin_keyboard(user_id))
-            return
-
-        if state == "WAIT_CHANNEL_POST" and is_staff(user_id):
-            clear_session(user_id)
-            try:
-                picker = json.loads(payload)
-            except Exception:
-                picker = {"btn_ids": [], "footer": True, "react": True}
-            await publish_custom_main_post(
-                text,
-                photo_file_id=photo_file_id,
-                selected_btn_ids=picker.get("btn_ids", []),
-                include_footer=picker.get("footer", True),
-                include_reactions=picker.get("react", True),
-            )
-            log_audit(user_id, "CHANNEL_POST", text[:80])
-            await send_message(chat_id, "✅ Published to Main Channel with your selected buttons!", admin_keyboard(user_id))
-            return
-
-        if state == "WAIT_VIP_CHANNEL_POST" and is_staff(user_id):
-            if not text and not photo_file_id:
-                await send_message(chat_id, "⚠️ Send text or a photo+caption to post to the VIP Channel (or /cancel).")
-                return
-            await publish_vip_channel_post(text, photo_file_id=photo_file_id)
-            log_audit(user_id, "VIP_CHANNEL_POST", text[:80] or "photo")
-            await send_message(
-                chat_id,
-                "✅ Published to <b>VIP Channel</b>!\n\nSend another VIP post/image right now, or tap <b>Done</b>:",
-                {"inline_keyboard": [[{"text": "✅ Done — Admin Dashboard", "callback_data": "admin:home", "style": "success"}]]},
-            )
-            return
-
-        if state == "WAIT_BTN_MEDIA" and is_staff(user_id):
-            btn_id = int(payload)
-            b = get_custom_button(btn_id)
-            if not b:
+        admin_states = {
+            "WAIT_ADMIN_REPLY", "WAIT_CHANNEL_POST", "WAIT_VIP_CHANNEL_POST",
+            "WAIT_BTN_MEDIA", "WAIT_BTN_ADD_TICKET", "WAIT_BTN_ADD_PRICE",
+            "WAIT_BTN_ADD_URL", "WAIT_BTN_SETPRICE", "WAIT_BTN_SETDAYS",
+            "WAIT_BTN_RENAME", "WAIT_BTN_SETDESC", "WAIT_BROADCAST", "WAIT_PLAN_PRICE",
+        }
+        if state in admin_states:
+            if not is_admin_private_chat(user_id, chat_id, chat_type):
                 clear_session(user_id)
-                await show_admin_buttons(chat_id)
+                await report_unauthorized_admin_attempt(user_id, f"SESSION:{state}")
+                await send_message(chat_id, "⛔ Access Denied.", main_menu_keyboard(user_id))
                 return
-            if photo_file_id:
-                fid, mtype = photo_file_id, "photo"
-            elif doc_file_id:
-                fid, mtype = doc_file_id, "document"
-            else:
-                await send_message(chat_id, "⚠️ Please send a <b>ticket image (photo)</b>, or tap Done / /done.")
-                return
-            offer_key = f"btn:{btn_id}"
-            with connect_db() as db:
-                db.execute(
-                    "INSERT INTO ticket_media(offer_key,file_id,media_type,caption,created_at) VALUES(?,?,?,?,?)",
-                    (offer_key, fid, mtype, text[:400], utcnow().isoformat()),
-                )
-            cnt = count_offer_media(offer_key)
-            log_audit(user_id, "UPLOAD_TICKET_MEDIA", f"btn:{btn_id} total={cnt}")
-            await send_message(
-                chat_id,
-                f"✅ Saved ticket image <b>#{cnt}</b> for <b>{html_escape(b['label'])}</b>!\nSend another image if needed, or tap Done:",
-                {"inline_keyboard": [[{"text": "✅ Done Uploading", "callback_data": f"admin:btn_media:{btn_id}", "style": "success"}]]},
-            )
-            return
 
-        if state == "WAIT_BTN_ADD_TICKET" and is_staff(user_id):
-            parts = [p.strip() for p in text.split("|")]
-            if len(parts) >= 2 and parts[0]:
-                label = parts[0][:64]
-                if not parts[1].isdigit():
-                    await send_message(chat_id, "⚠️ Price must be a whole number in KES. Example:\n<code>💎 Diamond Ticket | 1500 | 0</code>")
+            if state == "WAIT_ADMIN_REPLY":
+                clear_session(user_id)
+                await send_message(int(payload), f"💬 <b>ADMIN REPLY ({BRAND_TAG})</b>\n\n{html_escape(text)}")
+                await send_message(chat_id, "✅ Reply sent.", admin_keyboard(user_id))
+                return
+
+            if state == "WAIT_CHANNEL_POST":
+                clear_session(user_id)
+                try:
+                    picker = json.loads(payload)
+                except Exception:
+                    picker = {"btn_ids": [], "footer": True, "react": True}
+                await publish_custom_main_post(
+                    text,
+                    photo_file_id=photo_file_id,
+                    selected_btn_ids=picker.get("btn_ids", []),
+                    include_footer=picker.get("footer", True),
+                    include_reactions=picker.get("react", True),
+                )
+                log_audit(user_id, "CHANNEL_POST", text[:80])
+                await send_message(chat_id, "✅ Published to Main Channel with your selected buttons!", admin_keyboard(user_id))
+                return
+
+            if state == "WAIT_VIP_CHANNEL_POST":
+                if not text and not photo_file_id:
+                    await send_message(chat_id, "⚠️ Send text or a photo+caption to post to the VIP Channel (or /cancel).")
                     return
-                price = int(parts[1])
-                days = int(parts[2]) if (len(parts) >= 3 and parts[2].isdigit()) else 1
+                await publish_vip_channel_post(text, photo_file_id=photo_file_id)
+                log_audit(user_id, "VIP_CHANNEL_POST", text[:80] or "photo")
+                await send_message(
+                    chat_id,
+                    "✅ Published to <b>VIP Channel</b>!\n\nSend another VIP post/image right now, or tap <b>Done</b>:",
+                    {"inline_keyboard": [[{"text": "✅ Done — Admin Dashboard", "callback_data": "admin:home", "style": "success"}]]},
+                )
+                return
+
+            if state == "WAIT_BTN_MEDIA":
+                btn_id = int(payload)
+                b = get_custom_button(btn_id)
+                if not b:
+                    clear_session(user_id)
+                    await show_admin_buttons(chat_id)
+                    return
+                if photo_file_id:
+                    fid, mtype = photo_file_id, "photo"
+                elif doc_file_id:
+                    fid, mtype = doc_file_id, "document"
+                else:
+                    await send_message(chat_id, "⚠️ Please send a <b>ticket image (photo or file)</b>, or tap Done / /done.")
+                    return
+                offer_key = f"btn:{btn_id}"
+                with connect_db() as db:
+                    db.execute(
+                        "INSERT INTO ticket_media(offer_key,file_id,media_type,caption,created_at) VALUES(?,?,?,?,?)",
+                        (offer_key, fid, mtype, text[:400], utcnow().isoformat()),
+                    )
+                cnt = count_offer_media(offer_key)
+                log_audit(user_id, "UPLOAD_TICKET_MEDIA", f"btn:{btn_id} total={cnt}")
+                await send_message(
+                    chat_id,
+                    f"✅ Saved ticket image <b>#{cnt}</b> for <b>{html_escape(b['label'])}</b>!\nSend another image if needed, or tap Done:",
+                    {"inline_keyboard": [[{"text": "✅ Done Uploading", "callback_data": f"admin:btn_media:{btn_id}", "style": "success"}]]},
+                )
+                return
+
+            if state == "WAIT_BTN_ADD_TICKET":
+                parts = [p.strip() for p in text.split("|")]
+                if len(parts) >= 2 and parts[0]:
+                    label = parts[0][:64]
+                    if not parts[1].isdigit():
+                        await send_message(chat_id, "⚠️ Price must be a whole number in KES. Example:\n<code>💎 Diamond Ticket | 1500 | 0</code>")
+                        return
+                    price = int(parts[1])
+                    days = int(parts[2]) if (len(parts) >= 3 and parts[2].isdigit()) else 1
+                    clear_session(user_id)
+                    with connect_db() as db:
+                        new_id = insert_returning_id(
+                            db,
+                            "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                            (label, "", "TICKET", price, days, "", "primary"),
+                        )
+                    log_audit(user_id, "ADD_BTN_TICKET", f"{label} KES {price}")
+                    await send_message(chat_id, f"✅ Added ticket button <b>{html_escape(label)}</b>!")
+                    await show_admin_button_detail(chat_id, new_id)
+                elif text:
+                    set_session(user_id, "WAIT_BTN_ADD_PRICE", text[:64])
+                    await send_message(chat_id, f"💰 Enter the <b>KES price</b> for <b>{html_escape(text[:64])}</b> (e.g. <code>500</code>, or <code>0</code> for Contact Admin only):")
+                return
+
+            if state == "WAIT_BTN_ADD_PRICE":
+                if not text.isdigit():
+                    await send_message(chat_id, "⚠️ Enter a valid whole number KES price (e.g. <code>500</code>) or /cancel.")
+                    return
+                price = int(text)
+                label = payload[:64]
                 clear_session(user_id)
                 with connect_db() as db:
                     new_id = insert_returning_id(
                         db,
                         "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
-                        (label, "", "TICKET", price, days, "", "primary"),
+                        (label, "", "TICKET", price, 1, "", "primary"),
                     )
                 log_audit(user_id, "ADD_BTN_TICKET", f"{label} KES {price}")
-                await send_message(chat_id, f"✅ Added ticket button <b>{html_escape(label)}</b>!")
+                await send_message(chat_id, f"✅ Created <b>{html_escape(label)}</b> — KES {price:,}!")
                 await show_admin_button_detail(chat_id, new_id)
-            elif text:
-                set_session(user_id, "WAIT_BTN_ADD_PRICE", text[:64])
-                await send_message(chat_id, f"💰 Enter the <b>KES price</b> for <b>{html_escape(text[:64])}</b> (e.g. <code>500</code>, or <code>0</code> for Contact Admin only):")
-            return
-
-        if state == "WAIT_BTN_ADD_PRICE" and is_staff(user_id):
-            if not text.isdigit():
-                await send_message(chat_id, "⚠️ Enter a valid whole number KES price (e.g. <code>500</code>) or /cancel.")
                 return
-            price = int(text)
-            label = payload[:64]
-            clear_session(user_id)
-            with connect_db() as db:
-                new_id = insert_returning_id(
-                    db,
-                    "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
-                    (label, "", "TICKET", price, 1, "", "primary"),
-                )
-            log_audit(user_id, "ADD_BTN_TICKET", f"{label} KES {price}")
-            await send_message(chat_id, f"✅ Created <b>{html_escape(label)}</b> — KES {price:,}!")
-            await show_admin_button_detail(chat_id, new_id)
-            return
 
-        if state == "WAIT_BTN_ADD_URL" and is_staff(user_id):
-            parts = [p.strip() for p in text.split("|", 1)]
-            if len(parts) != 2 or not parts[0] or not parts[1].startswith(("http://", "https://")):
-                await send_message(chat_id, "⚠️ Format: <code>Button Label | https://example.com</code>")
+            if state == "WAIT_BTN_ADD_URL":
+                parts = [p.strip() for p in text.split("|", 1)]
+                if len(parts) != 2 or not parts[0] or not parts[1].startswith(("http://", "https://")):
+                    await send_message(chat_id, "⚠️ Format: <code>Button Label | https://example.com</code>")
+                    return
+                clear_session(user_id)
+                with connect_db() as db:
+                    new_id = insert_returning_id(
+                        db,
+                        "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                        (parts[0][:64], parts[1][:300], "URL", 0, 0, "", "primary"),
+                    )
+                log_audit(user_id, "ADD_BTN_URL", parts[0][:64])
+                await send_message(chat_id, f"✅ Added link button <b>{html_escape(parts[0][:64])}</b>!")
+                await show_admin_button_detail(chat_id, new_id)
                 return
-            clear_session(user_id)
-            with connect_db() as db:
-                new_id = insert_returning_id(
-                    db,
-                    "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
-                    (parts[0][:64], parts[1][:300], "URL", 0, 0, "", "primary"),
-                )
-            log_audit(user_id, "ADD_BTN_URL", parts[0][:64])
-            await send_message(chat_id, f"✅ Added link button <b>{html_escape(parts[0][:64])}</b>!")
-            await show_admin_button_detail(chat_id, new_id)
-            return
 
-        if state == "WAIT_BTN_SETPRICE" and is_staff(user_id):
-            if not text.isdigit():
-                await send_message(chat_id, "⚠️ Enter a whole number KES price (e.g. <code>500</code>) or /cancel.")
+            if state == "WAIT_BTN_SETPRICE":
+                if not text.isdigit():
+                    await send_message(chat_id, "⚠️ Enter a whole number KES price (e.g. <code>500</code>) or /cancel.")
+                    return
+                btn_id = int(payload)
+                clear_session(user_id)
+                with connect_db() as db:
+                    db.execute("UPDATE custom_buttons SET price=? WHERE id=?", (int(text), btn_id))
+                log_audit(user_id, "EDIT_BTN_PRICE", f"btn:{btn_id}={text}")
+                await show_admin_button_detail(chat_id, btn_id)
                 return
-            btn_id = int(payload)
-            clear_session(user_id)
-            with connect_db() as db:
-                db.execute("UPDATE custom_buttons SET price=? WHERE id=?", (int(text), btn_id))
-            log_audit(user_id, "EDIT_BTN_PRICE", f"btn:{btn_id}={text}")
-            await show_admin_button_detail(chat_id, btn_id)
-            return
 
-        if state == "WAIT_BTN_SETDAYS" and is_staff(user_id):
-            if not text.isdigit():
-                await send_message(chat_id, "⚠️ Enter a whole number of days (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket image delivery only).")
+            if state == "WAIT_BTN_SETDAYS":
+                if not text.isdigit():
+                    await send_message(chat_id, "⚠️ Enter a whole number of days (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket image delivery only).")
+                    return
+                btn_id = int(payload)
+                clear_session(user_id)
+                with connect_db() as db:
+                    db.execute("UPDATE custom_buttons SET days=? WHERE id=?", (int(text), btn_id))
+                log_audit(user_id, "EDIT_BTN_DAYS", f"btn:{btn_id}={text}d")
+                await show_admin_button_detail(chat_id, btn_id)
                 return
-            btn_id = int(payload)
-            clear_session(user_id)
-            with connect_db() as db:
-                db.execute("UPDATE custom_buttons SET days=? WHERE id=?", (int(text), btn_id))
-            log_audit(user_id, "EDIT_BTN_DAYS", f"btn:{btn_id}={text}d")
-            await show_admin_button_detail(chat_id, btn_id)
-            return
 
-        if state == "WAIT_BTN_RENAME" and is_staff(user_id):
-            if not text:
-                await send_message(chat_id, "⚠️ Send a valid button label or /cancel.")
+            if state == "WAIT_BTN_RENAME":
+                if not text:
+                    await send_message(chat_id, "⚠️ Send a valid button label or /cancel.")
+                    return
+                btn_id = int(payload)
+                clear_session(user_id)
+                with connect_db() as db:
+                    db.execute("UPDATE custom_buttons SET label=? WHERE id=?", (text[:64], btn_id))
+                log_audit(user_id, "RENAME_BTN", f"btn:{btn_id}={text[:64]}")
+                await show_admin_button_detail(chat_id, btn_id)
                 return
-            btn_id = int(payload)
-            clear_session(user_id)
-            with connect_db() as db:
-                db.execute("UPDATE custom_buttons SET label=? WHERE id=?", (text[:64], btn_id))
-            log_audit(user_id, "RENAME_BTN", f"btn:{btn_id}={text[:64]}")
-            await show_admin_button_detail(chat_id, btn_id)
-            return
 
-        if state == "WAIT_BTN_SETDESC" and is_staff(user_id):
-            btn_id = int(payload)
-            clear_session(user_id)
-            with connect_db() as db:
-                db.execute("UPDATE custom_buttons SET description=? WHERE id=?", (text[:300], btn_id))
-            log_audit(user_id, "DESC_BTN", f"btn:{btn_id}")
-            await show_admin_button_detail(chat_id, btn_id)
-            return
-
-        if state == "WAIT_BROADCAST" and is_staff(user_id):
-            clear_session(user_id)
-            with connect_db() as db:
-                targets = db.execute("SELECT user_id FROM users WHERE is_blocked=0 AND notify_news=1").fetchall()
-            sent = 0
-            for t in targets:
-                try:
-                    if photo_file_id:
-                        await telegram("sendPhoto", {"chat_id": int(t["user_id"]), "photo": photo_file_id, "caption": f"📣 <b>{PROJECT_NAME}</b>\n\n{html_escape(text)}"[:1020], "parse_mode": "HTML"})
-                    else:
-                        await send_message(int(t["user_id"]), f"📣 <b>{PROJECT_NAME}</b>\n\n{html_escape(text)}")
-                    sent += 1
-                except Exception:
-                    pass
-            await send_message(chat_id, f"✅ Broadcast sent to {sent} users.", admin_keyboard(user_id))
-            return
-
-        if state == "WAIT_PLAN_PRICE" and is_super_admin(user_id):
-            clear_session(user_id)
-            if not text.isdigit() or int(text) < 1:
-                await send_message(chat_id, "⚠️ Enter a whole number KES price.")
+            if state == "WAIT_BTN_SETDESC":
+                btn_id = int(payload)
+                clear_session(user_id)
+                with connect_db() as db:
+                    db.execute("UPDATE custom_buttons SET description=? WHERE id=?", (text[:300], btn_id))
+                log_audit(user_id, "DESC_BTN", f"btn:{btn_id}")
+                await show_admin_button_detail(chat_id, btn_id)
                 return
-            with connect_db() as db:
-                db.execute("UPDATE plans SET price=? WHERE name=?", (int(text), payload))
-            log_audit(user_id, "EDIT_PRICE", f"{payload}={text}")
-            await send_message(chat_id, f"✅ Updated {payload} to KES {text}.", admin_keyboard(user_id))
-            return
+
+            if state == "WAIT_BROADCAST":
+                clear_session(user_id)
+                with connect_db() as db:
+                    targets = db.execute("SELECT user_id FROM users WHERE is_blocked=0 AND notify_news=1").fetchall()
+                sent = 0
+                for t in targets:
+                    try:
+                        if photo_file_id:
+                            await telegram("sendPhoto", {"chat_id": int(t["user_id"]), "photo": photo_file_id, "caption": f"📣 <b>{PROJECT_NAME}</b>\n\n{html_escape(text)}"[:1020], "parse_mode": "HTML"})
+                        else:
+                            await send_message(int(t["user_id"]), f"📣 <b>{PROJECT_NAME}</b>\n\n{html_escape(text)}")
+                        sent += 1
+                    except Exception:
+                        pass
+                await send_message(chat_id, f"✅ Broadcast sent to {sent} users.", admin_keyboard(user_id))
+                return
+
+            if state == "WAIT_PLAN_PRICE":
+                clear_session(user_id)
+                if not text.isdigit() or int(text) < 1:
+                    await send_message(chat_id, "⚠️ Enter a whole number KES price.")
+                    return
+                with connect_db() as db:
+                    db.execute("UPDATE plans SET price=? WHERE name=?", (int(text), payload))
+                log_audit(user_id, "EDIT_PRICE", f"{payload}={text}")
+                await send_message(chat_id, f"✅ Updated {payload} to KES {text}.", admin_keyboard(user_id))
+                return
 
     await show_main_menu(chat_id, user_id)
 
@@ -2709,10 +2888,15 @@ async def handle_message(message):
 async def handle_callback(query):
     cid = query["id"]
     user = query["from"]
+    if not user or user.get("is_bot"):
+        await answer_callback(cid)
+        return
     user_id = user["id"]
     data = query.get("data", "")
     msg_obj = query.get("message") or {}
-    chat_id = msg_obj.get("chat", {}).get("id") or user_id
+    chat_obj = msg_obj.get("chat") or {}
+    chat_id = chat_obj.get("id") or user_id
+    chat_type = chat_obj.get("type", "private")
     message_id = msg_obj.get("message_id")
 
     if data.startswith("react:"):
@@ -2747,7 +2931,7 @@ async def handle_callback(query):
 
     register_user(user)
     db_user = get_user(user_id)
-    if db_user and db_user["is_blocked"] and not is_super_admin(user_id):
+    if db_user and db_user["is_blocked"] and not is_admin(user_id):
         await answer_callback(cid, "Suspended")
         return
 
@@ -2846,13 +3030,23 @@ async def handle_callback(query):
 
     if data == "menu:subscription":
         await answer_callback(cid)
+        await ensure_bot_username()
         prefs = get_user_prefs(user_id)
         with connect_db() as db:
             sub = db.execute("SELECT * FROM subscriptions WHERE user_id=?", (user_id,)).fetchone()
             orders = db.execute("SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 6", (user_id,)).fetchall()
+            ref_count = db.execute("SELECT COUNT(*) AS n FROM users WHERE referred_by=? AND referral_rewarded=1", (user_id,)).fetchone()["n"]
         sub_txt = f"✅ Active ({sub['plan'].title()}) — Expires: {'Lifetime' if sub['is_lifetime'] else format_local_time(sub['expires_at'], prefs['tz'])}" if (sub and sub["status"] == "ACTIVE") else "❌ Inactive"
         ord_txt = "\n".join(f"• {html_escape(format_order_item_name(o['plan']))} — {o['local_amount'] or o['amount']} [{o['status']}]" for o in orders) or "No orders yet."
-        await send_message(chat_id, f"💳 <b>MY SUBSCRIPTION</b>\n\nStatus: <b>{sub_txt}</b>\n\n<b>Recent Payments:</b>\n{ord_txt}", {"inline_keyboard": [[{"text": "👑 VIP Membership", "callback_data": "menu:vip", "style": "danger"}], [{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]})
+        reward_days = get_setting("referral_reward_days", "2")
+        ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}" if bot_username else ""
+        ref_txt = (
+            f"\n\n🎁 <b>Referral Program (+{reward_days}d VIP per paid invite):</b>\n"
+            f"Rewarded Invites: <b>{ref_count}</b>\n"
+            f"Your Link: <code>{ref_link}</code>"
+            if ref_link else ""
+        )
+        await send_message(chat_id, f"💳 <b>MY SUBSCRIPTION</b>\n\nStatus: <b>{sub_txt}</b>\n\n<b>Recent Payments:</b>\n{ord_txt}{ref_txt}", {"inline_keyboard": [[{"text": "👑 VIP Membership", "callback_data": "menu:vip", "style": "danger"}], [{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]})
         return
 
     if data == "menu:country":
@@ -2931,7 +3125,7 @@ async def handle_callback(query):
     if data == "menu:contact":
         await answer_callback(cid)
         set_session(user_id, "WAIT_SUPPORT_MSG")
-        await send_message(chat_id, f"💬 <b>CONTACT ADMIN ({BRAND_TAG})</b>\n\nSend your message (or photo) below, or /cancel:")
+        await send_message(chat_id, f"💬 <b>CONTACT ADMIN ({BRAND_TAG})</b>\n\nSend your message (or photo/file) below, or /cancel:")
         return
 
     if data.startswith("plan:"):
@@ -3012,9 +3206,9 @@ async def handle_callback(query):
         set_session(user_id, "WAIT_PAYMENT_PROOF", ext_ref)
         await send_message(
             chat_id,
-            f"📸 <b>SEND PAYMENT SCREENSHOT</b>\n\n"
+            f"📸 <b>SEND PAYMENT SCREENSHOT OR PDF</b>\n\n"
             f"Order Ref: <code>{ext_ref}</code>\n"
-            "Send your payment screenshot (photo) right here now (or send /cancel):",
+            "Send your payment screenshot (photo or PDF/file receipt) right here now (or send /cancel):",
         )
         return
 
@@ -3033,16 +3227,17 @@ async def handle_callback(query):
                 till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
                 await send_message(
                     user_id,
-                    f"⏳ Still pending on M-Pesa. Tap Verify again shortly, or pay manually via Till <code>{till_no}</code> and send your screenshot.",
+                    f"⏳ Still pending on M-Pesa. Tap Verify again shortly, or pay manually via Till <code>{till_no}</code> and send your screenshot/PDF.",
                 )
         except Exception:
             await send_message(user_id, "⚠️ Could not reach PayHero status right now. Try again in a moment or upload screenshot.")
         return
 
-    # ---- POST BUTTON PICKER CALLBACKS ----
+    # ---- STRICT ADMIN-ONLY CALLBACKS (POST PICKER & ADMIN DASHBOARD) ----
     if data.startswith("postpick:"):
-        if not is_staff(user_id):
-            await answer_callback(cid, "Unauthorized")
+        if not is_admin_private_chat(user_id, chat_id, chat_type):
+            await answer_callback(cid, "⛔ Admin access only.")
+            await report_unauthorized_admin_attempt(user_id, f"CB:{data}")
             return
         parts = data.split(":")
         sub = parts[1]
@@ -3116,8 +3311,9 @@ async def handle_callback(query):
         return
 
     if data.startswith("admin:"):
-        if not is_staff(user_id):
-            await answer_callback(cid, "Unauthorized")
+        if not is_admin_private_chat(user_id, chat_id, chat_type):
+            await answer_callback(cid, "⛔ Admin access only.")
+            await report_unauthorized_admin_attempt(user_id, f"CB:{data}")
             return
         parts = data.split(":")
         action = parts[1]
@@ -3154,22 +3350,55 @@ async def handle_callback(query):
             await show_admin_matches(chat_id, user_id)
         elif action == "accums":
             await answer_callback(cid)
+            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
+        elif action == "accum_pub" and len(parts) == 4 and parts[2].isdigit():
+            aid, target = int(parts[2]), parts[3].upper()
+            await answer_callback(cid, f"Publishing #{aid} to {target}...")
+            await publish_accumulator_to_channel(aid, target=target)
+            log_audit(user_id, "PUBLISH_ACCUM", f"#{aid} -> {target}")
+            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
+        elif action == "accum_rej" and len(parts) == 3 and parts[2].isdigit():
+            aid = int(parts[2])
             with connect_db() as db:
-                accums = db.execute("SELECT * FROM accumulators ORDER BY id DESC LIMIT 8").fetchall()
-            txt = "🎯 <b>ACCUMULATOR TICKETS</b>\n\n" + ("\n".join(f"• #{a['id']} [{a['category']}] {a['total_odds']}x — {a['status']}" for a in accums) or "No tickets yet.")
-            await send_message(chat_id, txt, admin_keyboard(user_id))
+                db.execute("UPDATE accumulators SET status='REJECTED' WHERE id=?", (aid,))
+            log_audit(user_id, "REJECT_ACCUM", f"#{aid}")
+            await answer_callback(cid, f"Rejected #{aid}")
+            await show_admin_accumulators(chat_id, user_id, message_id=message_id)
         elif action == "transactions":
             await answer_callback(cid)
-            await show_admin_transactions(chat_id, user_id)
-        elif action == "approve" and len(parts) == 3 and is_super_admin(user_id):
+            await show_admin_transactions(chat_id, user_id, message_id=message_id)
+        elif action == "viewproof" and len(parts) == 3:
+            ext_ref = parts[2]
+            with connect_db() as db:
+                o = db.execute("SELECT * FROM orders WHERE external_ref=?", (ext_ref,)).fetchone()
+            await answer_callback(cid)
+            if not o or not o["proof_file_id"]:
+                await send_message(chat_id, f"ℹ️ No uploaded photo/PDF proof for <code>{html_escape(ext_ref)}</code>.")
+            else:
+                cap = (
+                    f"👁️ <b>PAYMENT PROOF — {html_escape(ext_ref)}</b>\n"
+                    f"👤 User: <code>{o['user_id']}</code>\n"
+                    f"🎫 Item: <b>{html_escape(format_order_item_name(o['plan']))}</b> — {html_escape(o['local_amount'] or str(o['amount']))}"
+                )
+                kb = {
+                    "inline_keyboard": [[
+                        {"text": "✅ Confirm & Deliver Now", "callback_data": f"admin:approve:{ext_ref}", "style": "success"},
+                        {"text": "❌ Reject", "callback_data": f"admin:reject:{ext_ref}", "style": "danger"},
+                    ]]
+                }
+                if o["proof_type"] == "document":
+                    await telegram("sendDocument", {"chat_id": chat_id, "document": o["proof_file_id"], "caption": cap, "parse_mode": "HTML", "reply_markup": kb})
+                else:
+                    await telegram("sendPhoto", {"chat_id": chat_id, "photo": o["proof_file_id"], "caption": cap, "parse_mode": "HTML", "reply_markup": kb})
+        elif action == "approve" and len(parts) == 3:
             await answer_callback(cid, "Confirmed & Delivering")
             with connect_db() as db:
                 order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
             if order:
                 res = await finalize_paid_order(order, manual_admin=True)
                 log_audit(user_id, "APPROVE_ORDER", parts[2])
-                await send_message(chat_id, f"✅ Confirmed & delivered {parts[2]} ({res}).")
-        elif action == "reject" and len(parts) == 3 and is_super_admin(user_id):
+                await send_message(chat_id, f"✅ Confirmed & delivered <code>{html_escape(parts[2])}</code> ({res}).", {"inline_keyboard": [[{"text": "🧾 Back to Transactions", "callback_data": "admin:transactions", "style": "primary"}]]})
+        elif action == "reject" and len(parts) == 3:
             await answer_callback(cid, "Rejected")
             with connect_db() as db:
                 order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
@@ -3180,7 +3409,7 @@ async def handle_callback(query):
                     await send_message(int(order["user_id"]), f"❌ Payment confirmation for <code>{parts[2]}</code> was rejected. Contact {BRAND_TAG} if you need help.")
                 except Exception:
                     pass
-            await send_message(chat_id, f"🚫 Rejected {parts[2]}.")
+            await send_message(chat_id, f"🚫 Rejected <code>{html_escape(parts[2])}</code>.", {"inline_keyboard": [[{"text": "🧾 Back to Transactions", "callback_data": "admin:transactions", "style": "primary"}]]})
         elif action == "users":
             await answer_callback(cid)
             await show_admin_users(chat_id, user_id)
@@ -3316,27 +3545,27 @@ async def handle_callback(query):
             await answer_callback(cid)
             set_session(user_id, "WAIT_ADMIN_REPLY", parts[2])
             await send_message(chat_id, f"💬 Type reply to user <code>{parts[2]}</code>:")
-        elif action == "packages" and is_super_admin(user_id):
+        elif action == "packages":
             await answer_callback(cid)
             await show_admin_packages(chat_id)
-        elif action == "editprice" and len(parts) == 3 and is_super_admin(user_id):
+        elif action == "editprice" and len(parts) == 3:
             await answer_callback(cid)
             set_session(user_id, "WAIT_PLAN_PRICE", parts[2])
             await send_message(chat_id, f"💰 Enter new KES price for <b>{parts[2]}</b>:")
-        elif action == "channels" and is_super_admin(user_id):
+        elif action == "channels":
             await answer_callback(cid)
             await show_admin_settings(chat_id, message_id=message_id)
-        elif action == "toggle_autoshot" and is_super_admin(user_id):
+        elif action == "toggle_autoshot":
             cur = get_setting("auto_confirm_screenshot", "0")
             nxt = "0" if cur == "1" else "1"
             set_setting("auto_confirm_screenshot", nxt)
             log_audit(user_id, "TOGGLE_AUTOSHOT", nxt)
             await answer_callback(cid, f"Screenshot Auto-Deliver: {'ON' if nxt == '1' else 'OFF'}")
             await show_admin_settings(chat_id, message_id=message_id)
-        elif action == "export" and is_super_admin(user_id):
+        elif action == "export":
             await answer_callback(cid)
             await export_csv_backups(chat_id)
-        elif action == "audit" and is_super_admin(user_id):
+        elif action == "audit":
             await answer_callback(cid)
             with connect_db() as db:
                 logs = db.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15").fetchall()
@@ -3348,13 +3577,16 @@ async def handle_callback(query):
 
 
 # --------------------------------------------------
-# ADMIN HELPERS & CSV EXPORT
+# ADMIN HELPERS & CSV EXPORT (ADMIN CHAT ONLY)
 # --------------------------------------------------
 
 async def show_admin_settings(chat_id, message_id=None):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     auto_shot = get_setting("auto_confirm_screenshot", "0") == "1"
     till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
     airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
+    ref_days = get_setting("referral_reward_days", "2")
     txt = (
         "⚙️ <b>CHANNELS & PAYMENT SETTINGS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -3362,6 +3594,7 @@ async def show_admin_settings(chat_id, message_id=None):
         f"💎 VIP Channel: <code>{html_escape(get_setting('vip_channel_id'))}</code>\n"
         f"🏪 Kenya Manual Till: <code>{html_escape(till_no)}</code>\n"
         f"🔴 TZ/UG/ZM Airtel Money: <code>{html_escape(airtel_no)}</code>\n"
+        f"🎁 Referral Reward: <b>{html_escape(ref_days)} day(s) VIP</b>\n"
         f"🌐 Website: <code>{html_escape(get_website_url())}</code>\n"
         f"📸 Screenshot Auto-Deliver: <b>{'🟢 ON (Instant upon upload)' if auto_shot else '🔒 OFF (1-Tap Admin Confirm)'}</b>\n\n"
         "Use <code>/setsetting &lt;key&gt; &lt;value&gt;</code> to update values."
@@ -3376,6 +3609,8 @@ async def show_admin_settings(chat_id, message_id=None):
 
 
 async def show_admin_stats(chat_id, user_id):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
         users_cnt = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         vip_cnt = db.execute("SELECT COUNT(*) AS n FROM subscriptions WHERE status='ACTIVE'").fetchone()["n"]
@@ -3392,6 +3627,8 @@ async def show_admin_stats(chat_id, user_id):
 
 
 async def show_admin_matches(chat_id, user_id):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
         qf = db.execute("SELECT COUNT(*) AS n FROM matches WHERE tier='FREE' AND publish_status='QUEUED'").fetchone()["n"]
         qv = db.execute("SELECT COUNT(*) AS n FROM matches WHERE tier='VIP' AND publish_status='QUEUED'").fetchone()["n"]
@@ -3414,14 +3651,76 @@ async def show_admin_matches(chat_id, user_id):
     await send_message(chat_id, txt, {"inline_keyboard": rows})
 
 
-async def show_admin_transactions(chat_id, user_id):
+async def show_admin_accumulators(chat_id, user_id, message_id=None):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
+        accums = db.execute("SELECT * FROM accumulators ORDER BY id DESC LIMIT 6").fetchall()
+
+    lines = []
+    rows = []
+    for a in accums:
+        try:
+            sels = json.loads(a["selections_json"])
+        except Exception:
+            sels = []
+        legs_summary = ", ".join(f"{s.get('match')} ({s.get('tip')})" for s in sels[:4])
+        if len(sels) > 4:
+            legs_summary += f" +{len(sels) - 4} more"
+        lines.append(
+            f"• <b>#{a['id']} [{html_escape(a['category'])}] {html_escape(str(a['total_odds']))}x</b> — <code>{html_escape(a['status'])}</code>\n"
+            f"   <i>{html_escape(legs_summary)}</i>"
+        )
+        btn_row = [
+            {"text": f"📢 Main #{a['id']}", "callback_data": f"admin:accum_pub:{a['id']}:MAIN", "style": "success"},
+            {"text": f"💎 VIP #{a['id']}", "callback_data": f"admin:accum_pub:{a['id']}:VIP", "style": "primary"},
+        ]
+        if a["status"] == "PENDING_ADMIN":
+            btn_row.append({"text": "❌ Reject", "callback_data": f"admin:accum_rej:{a['id']}", "style": "danger"})
+        rows.append(btn_row)
+
+    rows.append([{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}])
+    txt = "🎯 <b>ACCUMULATOR TICKETS</b>\n━━━━━━━━━━━━━━━━━━━━\n\n" + ("\n\n".join(lines) if lines else "No tickets submitted yet.")
+    await edit_or_send(chat_id, message_id, txt, {"inline_keyboard": rows})
+
+
+async def show_admin_transactions(chat_id, user_id, message_id=None):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
+    with connect_db() as db:
+        pending = db.execute("SELECT * FROM orders WHERE status IN ('PENDING_REVIEW','PENDING_PROOF') ORDER BY created_at DESC LIMIT 6").fetchall()
         orders = db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 10").fetchall()
-    txt = "🧾 <b>TRANSACTIONS</b>\n\n" + ("\n".join(f"• <code>{o['external_ref']}</code> {html_escape(format_order_item_name(o['plan']))} {o['local_amount']} [{o['status']}]" for o in orders) or "No transactions yet.")
-    await send_message(chat_id, txt, admin_keyboard(user_id))
+
+    rows = []
+    pending_lines = []
+    for o in pending:
+        item = format_order_item_name(o["plan"])
+        amt = o["local_amount"] or f"KES {o['amount']}"
+        pending_lines.append(f"• <code>{o['external_ref']}</code> 👤<code>{o['user_id']}</code> | {html_escape(item)} ({html_escape(amt)}) [{o['status']}]")
+        action_row = [
+            {"text": f"✅ Approve {o['external_ref']}", "callback_data": f"admin:approve:{o['external_ref']}", "style": "success"},
+            {"text": "❌ Reject", "callback_data": f"admin:reject:{o['external_ref']}", "style": "danger"},
+        ]
+        if o["proof_file_id"]:
+            action_row.append({"text": "👁️ Proof", "callback_data": f"admin:viewproof:{o['external_ref']}", "style": "primary"})
+        rows.append(action_row)
+
+    recent_lines = [
+        f"• <code>{o['external_ref']}</code> {html_escape(format_order_item_name(o['plan']))} {html_escape(o['local_amount'] or str(o['amount']))} [{o['status']}]"
+        for o in orders
+    ]
+    rows.append([{"text": "🔄 Refresh", "callback_data": "admin:transactions", "style": "primary"}, {"text": "⬅️ Admin", "callback_data": "admin:home"}])
+
+    txt = ""
+    if pending_lines:
+        txt += "⏳ <b>PENDING REVIEW / PROOF</b>\n" + "\n".join(pending_lines) + "\n\n"
+    txt += "🧾 <b>RECENT TRANSACTIONS</b>\n" + ("\n".join(recent_lines) if recent_lines else "No transactions yet.")
+    await edit_or_send(chat_id, message_id, txt, {"inline_keyboard": rows})
 
 
 async def show_admin_users(chat_id, user_id):
+    if not is_admin(user_id) or str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
         users = db.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT 10").fetchall()
     txt = "👥 <b>RECENT USERS</b>\n\n" + "\n".join(f"• <code>{u['user_id']}</code> @{u['username'] or u['first_name']} [{u['country'] or 'Unconfirmed'}/{u['currency']}]" for u in users)
@@ -3429,6 +3728,8 @@ async def show_admin_users(chat_id, user_id):
 
 
 async def show_admin_packages(chat_id):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
         plans = db.execute("SELECT * FROM plans ORDER BY price").fetchall()
     rows = [[{"text": f"✏️ {p['title']} (KES {p['price']})", "callback_data": f"admin:editprice:{p['name']}", "style": "primary"}] for p in plans]
@@ -3437,6 +3738,8 @@ async def show_admin_packages(chat_id):
 
 
 async def export_csv_backups(chat_id):
+    if str(chat_id) != str(ADMIN_USER_ID):
+        return
     with connect_db() as db:
         orders = db.execute("SELECT * FROM orders ORDER BY created_at DESC").fetchall()
     buf = io.StringIO()
@@ -3472,7 +3775,6 @@ async def background_worker():
         try:
             await refresh_exchange_rates(force=False)
 
-            # Poll recent pending PayHero STK orders in case callback was missed
             cutoff_iso = (utcnow() - timedelta(minutes=30)).isoformat()
             with connect_db() as db:
                 pending_stk = db.execute(
@@ -3651,3 +3953,4 @@ async def payhero_callback(request: Request):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+```
