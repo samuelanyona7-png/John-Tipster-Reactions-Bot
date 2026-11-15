@@ -4,6 +4,7 @@ import re
 import csv
 import json
 import hmac
+import base64
 import hashlib
 import asyncio
 import secrets
@@ -36,6 +37,8 @@ log = logging.getLogger("prime-tips-empire")
 PROJECT_NAME = "PRIME TIPS EMPIRE"
 BRAND_TAG = "@isla_olivia0"
 DEFAULT_WEBSITE_URL = "https://primetips.site"
+DEFAULT_MPESA_TILL = "6076817"
+DEFAULT_AIRTEL_NUMBER = "+254754490056"
 
 
 def env_str(name, default=""):
@@ -77,28 +80,99 @@ bot_username = None
 http_client: httpx.AsyncClient | None = None
 
 # --------------------------------------------------
-# INTERNATIONAL COUNTRIES & 12 SUPPORTED CURRENCIES
+# INTERNATIONAL COUNTRIES & SUPPORTED CURRENCIES
 # --------------------------------------------------
 
 COUNTRIES = {
-    "KE": {"flag": "🇰🇪", "name": "Kenya", "currency": "KES", "tz": "Africa/Nairobi", "methods": ["mpesa", "airtel"], "how": "1️⃣ Select M-Pesa STK Push (Instant).\n2️⃣ Enter your Safaricom number (07/01).\n3️⃣ Confirm PIN on your phone.\n4️⃣ VIP activates automatically after verified callback."},
-    "UG": {"flag": "🇺🇬", "name": "Uganda", "currency": "UGX", "tz": "Africa/Kampala", "methods": ["mtn", "airtel"], "how": "1️⃣ Select MTN MoMo or Airtel Money.\n2️⃣ Contact @isla_olivia0 for mobile money payment details.\n3️⃣ Send payment & submit Phone | TransactionID for admin verification."},
-    "TZ": {"flag": "🇹🇿", "name": "Tanzania", "currency": "TZS", "tz": "Africa/Dar_es_Salaam", "methods": ["mpesa_tz", "airtel", "tigo"], "how": "1️⃣ Select M-Pesa TZ, Airtel, or Mixx/Tigo Pesa.\n2️⃣ Request payment number via @isla_olivia0.\n3️⃣ Submit Phone | TransactionID for verification."},
-    "NG": {"flag": "🇳🇬", "name": "Nigeria", "currency": "NGN", "tz": "Africa/Lagos", "methods": ["ng_bank"], "how": "1️⃣ Select Nigeria Bank / OPay / PalmPay.\n2️⃣ Contact @isla_olivia0 for Naira transfer details.\n3️⃣ Submit Sender/Phone | Reference for verification."},
-    "GH": {"flag": "🇬🇭", "name": "Ghana", "currency": "GHS", "tz": "Africa/Accra", "methods": ["mtn", "airtel"], "how": "1️⃣ Select MTN MoMo Ghana or AirtelTigo.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Phone | TransactionID for verification."},
-    "ZA": {"flag": "🇿🇦", "name": "South Africa", "currency": "ZAR", "tz": "Africa/Johannesburg", "methods": ["za_eft"], "how": "1️⃣ Select Instant EFT / Capitec.\n2️⃣ Contact @isla_olivia0 for EFT details.\n3️⃣ Submit Contact | Reference for verification."},
-    "US": {"flag": "🇺🇸", "name": "United States", "currency": "USD", "tz": "America/New_York", "methods": ["intl_transfer"], "how": "1️⃣ Select International Card / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for checkout details.\n3️⃣ Submit Email/Wallet | Transaction Reference."},
-    "GB": {"flag": "🇬🇧", "name": "United Kingdom", "currency": "GBP", "tz": "Europe/London", "methods": ["intl_transfer"], "how": "1️⃣ Select UK Bank / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Contact | Reference for verification."},
-    "EU": {"flag": "🇪🇺", "name": "Europe (Eurozone)", "currency": "EUR", "tz": "Europe/Berlin", "methods": ["intl_transfer"], "how": "1️⃣ Select SEPA / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Contact | Reference for verification."},
-    "IN": {"flag": "🇮🇳", "name": "India", "currency": "INR", "tz": "Asia/Kolkata", "methods": ["intl_transfer"], "how": "1️⃣ Select UPI / International Transfer / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Contact | Reference for verification."},
-    "CA": {"flag": "🇨🇦", "name": "Canada", "currency": "CAD", "tz": "America/Toronto", "methods": ["intl_transfer"], "how": "1️⃣ Select Interac / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Contact | Reference for verification."},
-    "AU": {"flag": "🇦🇺", "name": "Australia", "currency": "AUD", "tz": "Australia/Sydney", "methods": ["intl_transfer"], "how": "1️⃣ Select PayID / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Submit Contact | Reference for verification."},
+    "KE": {
+        "flag": "🇰🇪", "name": "Kenya", "currency": "KES", "tz": "Africa/Nairobi",
+        "methods": ["mpesa", "mpesa_till", "airtel"],
+        "how": (
+            f"1️⃣ <b>M-Pesa STK Push (PayHero)</b> for instant automatic checkout.\n"
+            f"2️⃣ Or pay manually via <b>Lipa na M-Pesa Buy Goods Till: <code>{DEFAULT_MPESA_TILL}</code></b>.\n"
+            f"3️⃣ Or use <b>Airtel Money: <code>{DEFAULT_AIRTEL_NUMBER}</code></b>.\n"
+            "4️⃣ Share your payment screenshot for confirmation & automatic delivery."
+        ),
+    },
+    "TZ": {
+        "flag": "🇹🇿", "name": "Tanzania", "currency": "TZS", "tz": "Africa/Dar_es_Salaam",
+        "methods": ["airtel", "mpesa_tz", "tigo"],
+        "how": (
+            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for M-Pesa TZ / Mixx by Yas).\n"
+            "2️⃣ Send the payment screenshot here for confirmation.\n"
+            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+        ),
+    },
+    "UG": {
+        "flag": "🇺🇬", "name": "Uganda", "currency": "UGX", "tz": "Africa/Kampala",
+        "methods": ["airtel", "mtn"],
+        "how": (
+            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
+            "2️⃣ Send your payment screenshot here for confirmation.\n"
+            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+        ),
+    },
+    "ZM": {
+        "flag": "🇿🇲", "name": "Zambia", "currency": "ZMW", "tz": "Africa/Lusaka",
+        "methods": ["airtel", "mtn"],
+        "how": (
+            f"1️⃣ Select <b>Airtel Money</b> and send to: <code>{DEFAULT_AIRTEL_NUMBER}</code> (or contact @isla_olivia0 for MTN MoMo).\n"
+            "2️⃣ Send your payment screenshot here for confirmation.\n"
+            "3️⃣ Receive your ticket / VIP automatically once confirmed."
+        ),
+    },
+    "NG": {
+        "flag": "🇳🇬", "name": "Nigeria", "currency": "NGN", "tz": "Africa/Lagos",
+        "methods": ["ng_bank"],
+        "how": "1️⃣ Select Nigeria Bank / OPay / PalmPay.\n2️⃣ Contact @isla_olivia0 for Naira transfer details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "GH": {
+        "flag": "🇬🇭", "name": "Ghana", "currency": "GHS", "tz": "Africa/Accra",
+        "methods": ["airtel", "mtn"],
+        "how": f"1️⃣ Select AirtelTigo Money (<code>{DEFAULT_AIRTEL_NUMBER}</code>) or MTN MoMo via @isla_olivia0.\n2️⃣ Send payment screenshot here for confirmation.",
+    },
+    "ZA": {
+        "flag": "🇿🇦", "name": "South Africa", "currency": "ZAR", "tz": "Africa/Johannesburg",
+        "methods": ["za_eft"],
+        "how": "1️⃣ Select Instant EFT / Capitec.\n2️⃣ Contact @isla_olivia0 for EFT details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "US": {
+        "flag": "🇺🇸", "name": "United States", "currency": "USD", "tz": "America/New_York",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select International Card / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for checkout details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "GB": {
+        "flag": "🇬🇧", "name": "United Kingdom", "currency": "GBP", "tz": "Europe/London",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select UK Bank / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "EU": {
+        "flag": "🇪🇺", "name": "Europe (Eurozone)", "currency": "EUR", "tz": "Europe/Berlin",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select SEPA / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "IN": {
+        "flag": "🇮🇳", "name": "India", "currency": "INR", "tz": "Asia/Kolkata",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select UPI / International Transfer / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "CA": {
+        "flag": "🇨🇦", "name": "Canada", "currency": "CAD", "tz": "America/Toronto",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select Interac / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
+    "AU": {
+        "flag": "🇦🇺", "name": "Australia", "currency": "AUD", "tz": "Australia/Sydney",
+        "methods": ["intl_transfer"],
+        "how": "1️⃣ Select PayID / PayPal / USDT.\n2️⃣ Contact @isla_olivia0 for payment details.\n3️⃣ Send payment screenshot here for confirmation.",
+    },
 }
 
 CURRENCIES = {
     "KES": {"symbol": "KES ", "decimals": 0},
-    "UGX": {"symbol": "UGX ", "decimals": 0},
     "TZS": {"symbol": "TZS ", "decimals": 0},
+    "UGX": {"symbol": "UGX ", "decimals": 0},
+    "ZMW": {"symbol": "ZMW ", "decimals": 2},
     "NGN": {"symbol": "₦", "decimals": 0},
     "GHS": {"symbol": "GHS ", "decimals": 2},
     "ZAR": {"symbol": "R", "decimals": 2},
@@ -113,10 +187,11 @@ CURRENCIES = {
 EUROZONE_ISO = {"AT", "BE", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES", "HR"}
 
 METHOD_LABELS = {
-    "mpesa": ("🇰🇪 M-Pesa STK Push (Instant)", "success"),
-    "airtel": ("🔴 Airtel Money", "danger"),
+    "mpesa": ("📲 M-Pesa STK Push (PayHero)", "success"),
+    "mpesa_till": (f"🏪 Manual M-Pesa Till ({DEFAULT_MPESA_TILL})", "primary"),
+    "airtel": (f"🔴 Airtel Money ({DEFAULT_AIRTEL_NUMBER})", "danger"),
     "mtn": ("🟡 MTN Mobile Money", "primary"),
-    "mpesa_tz": ("🇹🇿 Vodacom M-Pesa TZ", "danger"),
+    "mpesa_tz": ("🇹🇿 Vodacom M-Pesa TZ", "primary"),
     "tigo": ("🔵 Mixx / Tigo Pesa", "primary"),
     "ng_bank": ("🇳🇬 Bank / OPay / PalmPay", "success"),
     "za_eft": ("🇿🇦 Instant EFT / Capitec", "primary"),
@@ -292,6 +367,7 @@ def init_db():
                 payhero_reference TEXT,
                 checkout_id TEXT,
                 mpesa_receipt TEXT,
+                proof_file_id TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -370,6 +446,17 @@ def init_db():
             )
         """)
 
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS ticket_media (
+                id {pk_auto},
+                offer_key TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                media_type TEXT NOT NULL DEFAULT 'photo',
+                caption TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+        """)
+
         db.execute("""
             CREATE TABLE IF NOT EXISTS channel_posts (
                 channel_msg_id BIGINT PRIMARY KEY,
@@ -407,6 +494,7 @@ def init_db():
         ensure_column(db, "plans", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "orders", "provider", "TEXT NOT NULL DEFAULT 'mpesa'")
         ensure_column(db, "orders", "mpesa_receipt", "TEXT")
+        ensure_column(db, "orders", "proof_file_id", "TEXT")
         ensure_column(db, "orders", "currency", "TEXT NOT NULL DEFAULT 'KES'")
         ensure_column(db, "orders", "local_amount", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "subscriptions", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
@@ -437,6 +525,9 @@ def init_db():
             "vip_channel_id": VIP_CHANNEL_ID,
             "main_channel_url": MAIN_CHANNEL_URL or (f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID.startswith("@") else ""),
             "payhero_channel_id": PAYHERO_CHANNEL_ID,
+            "mpesa_till_number": DEFAULT_MPESA_TILL,
+            "airtel_money_number": DEFAULT_AIRTEL_NUMBER,
+            "auto_confirm_screenshot": "0",
             "referral_reward_days": "2",
             "vip_odds_info": "🔥 Daily VIP Matches: Curated Football Picks & Multi-Bet Tickets",
             "admin_contact_url": f"https://t.me/{BRAND_TAG.lstrip('@')}",
@@ -574,7 +665,7 @@ def has_active_vip(user_id):
 
 
 # --------------------------------------------------
-# CUSTOM BUTTONS / TICKET PRODUCTS HELPERS
+# CUSTOM BUTTONS / TICKET IMAGES HELPERS
 # --------------------------------------------------
 
 def get_all_custom_buttons(only_active=True):
@@ -587,6 +678,16 @@ def get_all_custom_buttons(only_active=True):
 def get_custom_button(btn_id):
     with connect_db() as db:
         return db.execute("SELECT * FROM custom_buttons WHERE id=?", (int(btn_id),)).fetchone()
+
+
+def get_offer_media(offer_key):
+    with connect_db() as db:
+        return db.execute("SELECT * FROM ticket_media WHERE offer_key=? ORDER BY id", (str(offer_key),)).fetchall()
+
+
+def count_offer_media(offer_key):
+    with connect_db() as db:
+        return int(db.execute("SELECT COUNT(*) AS n FROM ticket_media WHERE offer_key=?", (str(offer_key),)).fetchone()["n"])
 
 
 def resolve_offer(plan_or_btn):
@@ -830,7 +931,7 @@ async def answer_callback(callback_id, text=""):
 
 
 # --------------------------------------------------
-# KEYBOARDS (10-BUTTON MENU + GENUINE REACTIONS + CHANNEL BUTTONS)
+# KEYBOARDS (MENU + GENUINE REACTIONS + CHANNEL BUTTONS)
 # --------------------------------------------------
 
 def main_menu_keyboard(user_id=None):
@@ -965,7 +1066,6 @@ def save_channel_post_meta(channel_msg_id, selected_btn_ids, include_reactions, 
 
 
 def channel_post_keyboard(channel_msg_id=None, selected_btn_ids=None, include_footer=True, include_reactions=True):
-    # If updating an existing post (e.g. reaction tap), restore its exact saved buttons/settings
     if channel_msg_id and selected_btn_ids is None:
         with connect_db() as db:
             meta = db.execute("SELECT * FROM channel_posts WHERE channel_msg_id=?", (int(channel_msg_id),)).fetchone()
@@ -993,7 +1093,6 @@ def channel_post_keyboard(channel_msg_id=None, selected_btn_ids=None, include_fo
             for idx, e in enumerate(REACTION_EMOJIS[3:])
         ])
 
-    # Selected custom / ticket buttons for this channel post
     if selected_btn_ids:
         with connect_db() as db:
             placeholders = ",".join(["?"] * len(selected_btn_ids))
@@ -1042,10 +1141,11 @@ def admin_keyboard(user_id):
             {"text": "🎛️ Channel Buttons & Tickets", "callback_data": "admin:buttons", "style": "primary"},
         ],
         [
-            {"text": "📝 Post to Channel", "callback_data": "admin:post_channel", "style": "success"},
-            {"text": "📢 VIP Promo Post", "callback_data": "admin:post", "style": "danger"},
+            {"text": "📝 Post to Main Channel", "callback_data": "admin:post_channel", "style": "success"},
+            {"text": "💎 Post to VIP Channel", "callback_data": "admin:post_vip_channel", "style": "danger"},
         ],
         [
+            {"text": "📢 VIP Promo Post", "callback_data": "admin:post", "style": "primary"},
             {"text": "📣 Broadcast", "callback_data": "admin:broadcast", "style": "danger"},
         ],
     ]
@@ -1063,17 +1163,23 @@ def admin_keyboard(user_id):
 
 
 # --------------------------------------------------
-# PAYMENTS (PayHero M-Pesa STK + Verified International Review)
+# PAYMENTS (PayHero STK + Till 6076817 Fallback + Airtel +254754490056 + Screenshots)
 # --------------------------------------------------
 
 def payhero_headers():
     token = PAYHERO_AUTH_TOKEN.strip()
-    authorization = token if token.lower().startswith("basic ") else f"Basic {token}"
+    if token.lower().startswith("basic "):
+        authorization = token
+    elif ":" in token:
+        encoded = base64.b64encode(token.encode("utf-8")).decode("utf-8")
+        authorization = f"Basic {encoded}"
+    else:
+        authorization = f"Basic {token}"
     return {"Authorization": authorization, "Content-Type": "application/json"}
 
 
 def normalize_phone(phone):
-    phone = re.sub(r"[\s+\-]", "", phone)
+    phone = re.sub(r"[\s+\-()]", "", phone)
     if phone.startswith("254") and len(phone) == 12:
         phone = "0" + phone[3:]
     if (phone.startswith("7") or phone.startswith("1")) and len(phone) == 9:
@@ -1084,11 +1190,6 @@ def normalize_phone(phone):
 def get_plan(plan_name):
     with connect_db() as db:
         return db.execute("SELECT * FROM plans WHERE name=?", (plan_name,)).fetchone()
-
-
-def mark_order_failed(external_ref):
-    with connect_db() as db:
-        db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=? AND status='PENDING'", (external_ref,))
 
 
 def recent_stk_cooldown_remaining(user_id):
@@ -1102,6 +1203,106 @@ def recent_stk_cooldown_remaining(user_id):
     return max(0, int(STK_COOLDOWN_SECONDS - (utcnow() - parse_utc(last["created_at"])).total_seconds()))
 
 
+async def send_manual_till_fallback(user_id, external_ref, item_title, amount, reason_note=""):
+    till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+    with connect_db() as db:
+        db.execute("UPDATE orders SET provider='mpesa_till', status='PENDING_PROOF' WHERE external_ref=?", (external_ref,))
+    set_session(user_id, "WAIT_PAYMENT_PROOF", external_ref)
+
+    prefix = f"⚠️ <i>{html_escape(reason_note)}</i>\n\n" if reason_note else ""
+    await send_message(
+        user_id,
+        f"{prefix}"
+        f"🏪 <b>PAY VIA M-PESA TILL NUMBER {html_escape(till_no)}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
+        f"💰 Amount: <b>KES {int(amount):,}</b>\n"
+        f"🔢 Till Number (Buy Goods): <code>{html_escape(till_no)}</code>\n"
+        f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
+        f"📝 <b>Steps:</b>\n"
+        f"1️⃣ Go to <b>M-Pesa → Lipa na M-Pesa → Buy Goods and Services</b>\n"
+        f"2️⃣ Enter Till Number: <code>{html_escape(till_no)}</code>\n"
+        f"3️⃣ Enter Amount: <b>KES {int(amount):,}</b> & enter your M-Pesa PIN\n\n"
+        f"📸 <b>After paying, send your M-Pesa payment screenshot (photo) right here</b> for confirmation & automatic delivery!",
+        {
+            "inline_keyboard": [
+                [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
+                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+            ]
+        },
+    )
+
+
+async def create_manual_order_and_prompt(user_id, plan_name, method_key):
+    offer = resolve_offer(plan_name)
+    if not offer:
+        await send_message(user_id, "⚠️ Selected package/ticket is currently unavailable.")
+        return
+
+    prefs = get_user_prefs(user_id)
+    local_str, _ = format_converted_price(offer["price"], prefs["currency"])
+    external_ref = "MAN" + secrets.token_hex(6).upper()
+    amount = int(offer["price"])
+
+    with connect_db() as db:
+        db.execute(
+            """
+            INSERT INTO orders(external_ref,user_id,plan,amount,currency,local_amount,phone,provider,status,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (external_ref, user_id, offer["key"], amount, prefs["currency"], local_str, method_key, method_key, "PENDING_PROOF", utcnow().isoformat()),
+        )
+
+    set_session(user_id, "WAIT_PAYMENT_PROOF", external_ref)
+
+    if method_key == "mpesa_till":
+        await send_manual_till_fallback(user_id, external_ref, offer["title"], amount)
+        return
+
+    if method_key == "airtel":
+        airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
+        await send_message(
+            user_id,
+            f"🔴 <b>AIRTEL MONEY PAYMENT</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
+            f"💰 Amount: <b>{html_escape(local_str)}</b>\n"
+            f"📞 Airtel Money Number: <code>{html_escape(airtel_no)}</code>\n"
+            f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
+            f"📝 <b>How to Pay (Tanzania / Uganda / Zambia / Kenya):</b>\n"
+            f"1️⃣ Send <b>{html_escape(local_str)}</b> via Airtel Money to <code>{html_escape(airtel_no)}</code>\n"
+            f"2️⃣ <b>Send your payment screenshot (photo) right here</b> after paying for confirmation & automatic delivery!",
+            {
+                "inline_keyboard": [
+                    [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                    [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                ]
+            },
+        )
+        return
+
+    # Other methods (MTN, M-Pesa TZ, Tigo, NG Bank, ZA EFT, International)
+    await send_message(
+        user_id,
+        f"💳 <b>{html_escape(method_key.upper())} PAYMENT</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
+        f"💰 Amount: <b>{html_escape(local_str)}</b>\n"
+        f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
+        f"1️⃣ Contact Admin <b>{BRAND_TAG}</b> for payment details.\n"
+        f"2️⃣ <b>Send your payment screenshot (photo)</b> (or <code>Phone/Email | TransactionID</code>) right here after paying!",
+        {
+            "inline_keyboard": [
+                [{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}],
+                [{"text": "📸 Send Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "success"}],
+                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+            ]
+        },
+    )
+
+
 async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
     offer = resolve_offer(plan_name)
     if not offer:
@@ -1111,7 +1312,7 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
 
     wait_sec = recent_stk_cooldown_remaining(user_id)
     if wait_sec > 0:
-        msg = f"Please wait {wait_sec}s before requesting another M-Pesa prompt."
+        msg = f"Please wait {wait_sec}s before requesting another M-Pesa STK prompt."
         if notify_telegram:
             await send_message(user_id, f"⏳ {msg}")
         return {"ok": False, "error": msg}
@@ -1120,6 +1321,9 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
     amount = int(offer["price"])
     ph_channel = int(get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID))
     item_title = offer["title"]
+
+    db_user = get_user(user_id)
+    cust_name = (db_user["first_name"] if db_user and db_user["first_name"] else "Prime Tips Member")[:40]
 
     with connect_db() as db:
         db.execute(
@@ -1136,30 +1340,54 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
         "channel_id": ph_channel,
         "provider": "m-pesa",
         "external_reference": external_ref,
+        "customer_name": cust_name,
         "callback_url": PUBLIC_URL.rstrip("/") + "/payhero/callback",
     }
 
     try:
         client = await get_http()
         response = await client.post(PAYHERO_URL + "/payments", headers=payhero_headers(), json=payload)
-        result = response.json()
+        try:
+            result = response.json()
+        except Exception:
+            result = {"raw": response.text[:300]}
 
-        if response.status_code not in (200, 201) or not result.get("success"):
-            log.error("PayHero error (%s): %s", response.status_code, result)
-            mark_order_failed(external_ref)
+        is_ok = (response.status_code in (200, 201)) and (bool(result.get("success")) or bool(result.get("reference")))
+        if not is_ok:
+            log.error("PayHero STK failed (%s): %s", response.status_code, result)
+            try:
+                err_msg = result.get("error_message") or result.get("message") or str(result)[:180]
+                await send_message(ADMIN_USER_ID, f"⚠️ PayHero STK fallback triggered (HTTP {response.status_code}): <code>{html_escape(str(err_msg))}</code>")
+            except Exception:
+                pass
             if notify_telegram:
-                await send_message(user_id, f"❌ <b>M-Pesa request could not be started.</b>\nContact {BRAND_TAG}")
-            return {"ok": False, "error": "PayHero rejected payment"}
+                await send_manual_till_fallback(
+                    user_id,
+                    external_ref,
+                    item_title,
+                    amount,
+                    reason_note="Instant STK Push could not be reached — use Manual Till 6076817 below!",
+                )
+            return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "PayHero STK failed"}
 
         reference = result.get("reference")
         checkout_id = result.get("CheckoutRequestID")
         if not reference:
-            mark_order_failed(external_ref)
-            raise RuntimeError("Missing PayHero reference")
+            log.error("PayHero response missing reference: %s", result)
+            if notify_telegram:
+                await send_manual_till_fallback(
+                    user_id,
+                    external_ref,
+                    item_title,
+                    amount,
+                    reason_note="Instant STK Push unavailable — use Manual Till 6076817 below!",
+                )
+            return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "Missing PayHero reference"}
 
         with connect_db() as db:
             db.execute("UPDATE orders SET payhero_reference=?, checkout_id=? WHERE external_ref=?", (reference, checkout_id, external_ref))
 
+        till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
         if notify_telegram:
             await send_message(
                 user_id,
@@ -1168,74 +1396,29 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
                 f"💳 Transaction Amount: <b>KES {amount:,}</b>\n"
                 f"📞 Phone: <code>{html_escape(phone)}</code>\n"
                 f"🔗 Ref: <code>{external_ref}</code>\n\n"
-                "🔐 Enter your M-Pesa PIN. Access activates automatically after verified callback.",
+                "🔐 Enter your M-Pesa PIN on your phone. Your ticket/VIP activates automatically!\n"
+                f"<i>If you don't see the PIN prompt, tap <b>Pay via Till {html_escape(till_no)}</b> or upload your screenshot below.</i>",
                 {
                     "inline_keyboard": [
                         [{"text": "🔄 Verify Payment Status", "callback_data": f"verify:{external_ref}", "style": "success"}],
-                        [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
+                        [{"text": f"🏪 Use Till {till_no} Instead", "callback_data": f"manualtill:{external_ref}", "style": "primary"}],
+                        [{"text": "📸 Upload Payment Screenshot", "callback_data": f"proof:{external_ref}", "style": "primary"}],
+                        [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
                     ]
                 },
             )
         return {"ok": True, "external_ref": external_ref, "status": "PENDING"}
-    except Exception:
-        log.exception("Payment initiation failed")
-        mark_order_failed(external_ref)
+    except Exception as exc:
+        log.exception("Payment initiation failed: %s", exc)
         if notify_telegram:
-            await send_message(user_id, f"⚠️ Payment could not start. Contact {BRAND_TAG}")
-        return {"ok": False, "error": "Payment initiation failed"}
-
-
-async def submit_international_reference(user_id, plan_name, provider, text_input):
-    offer = resolve_offer(plan_name)
-    if not offer:
-        await send_message(user_id, "⚠️ Selected package/ticket unavailable.")
-        return
-
-    parts = [p.strip() for p in text_input.split("|")]
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        await send_message(user_id, "⚠️ Format: <code>PhoneOrEmail | TransactionID</code>")
-        return
-
-    contact_val, txn_ref = parts[0][:50], parts[1][:60]
-    prefs = get_user_prefs(user_id)
-    local_str, _ = format_converted_price(offer["price"], prefs["currency"])
-    external_ref = "INT" + secrets.token_hex(6).upper()
-    amount = int(offer["price"])
-
-    with connect_db() as db:
-        db.execute(
-            """
-            INSERT INTO orders(external_ref,user_id,plan,amount,currency,local_amount,phone,provider,status,mpesa_receipt,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (external_ref, user_id, offer["key"], amount, prefs["currency"], local_str, contact_val, provider, "PENDING_REVIEW", txn_ref, utcnow().isoformat()),
-        )
-
-    await send_message(
-        user_id,
-        "⏳ <b>PAYMENT SUBMITTED FOR VERIFICATION</b>\n\n"
-        f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
-        f"🔗 Order Ref: <code>{external_ref}</code>\n"
-        f"🧾 Txn ID: <code>{html_escape(txn_ref)}</code>\n\n"
-        "🔒 Access is activated only after transaction verification (never from screenshots alone).",
-        {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
-    )
-
-    await send_message(
-        ADMIN_USER_ID,
-        f"🔔 <b>PAYMENT REVIEW ({html_escape(provider.upper())})</b>\n\n"
-        f"🆔 User: <code>{user_id}</code>\n"
-        f"🎫 Item: <b>{html_escape(offer['title'])}</b> — {html_escape(local_str)}\n"
-        f"📞 Contact: <code>{html_escape(contact_val)}</code>\n"
-        f"🧾 Txn ID: <code>{html_escape(txn_ref)}</code>\n"
-        f"🔗 Ref: <code>{external_ref}</code>",
-        {
-            "inline_keyboard": [[
-                {"text": "✅ Verify & Activate", "callback_data": f"admin:approve:{external_ref}", "style": "success"},
-                {"text": "❌ Reject", "callback_data": f"admin:reject:{external_ref}", "style": "danger"},
-            ]]
-        },
-    )
+            await send_manual_till_fallback(
+                user_id,
+                external_ref,
+                item_title,
+                amount,
+                reason_note="Instant STK Push timed out — use Manual Till 6076817 below!",
+            )
+        return {"ok": False, "fallback": "till", "external_ref": external_ref, "error": "Payment initiation failed"}
 
 
 async def verify_payhero_transaction(reference):
@@ -1250,8 +1433,37 @@ async def verify_payhero_transaction(reference):
 
 
 # --------------------------------------------------
-# VIP ACCESS & ORDER FINALIZATION
+# VIP ACCESS, TICKET IMAGE DELIVERY & ORDER FINALIZATION
 # --------------------------------------------------
+
+async def send_offer_ticket_media(user_id, offer_key, title, receipt=None):
+    media_rows = get_offer_media(offer_key)
+    if not media_rows:
+        return 0
+    receipt_txt = f"\n🧾 Receipt: <code>{html_escape(receipt)}</code>" if receipt else ""
+    sent = 0
+    for idx, m in enumerate(media_rows):
+        cap = m["caption"].strip() if m["caption"] else f"🎫 <b>{html_escape(title)}</b> — Confirmed!{receipt_txt if idx == 0 else ''}"
+        try:
+            if m["media_type"] == "document":
+                await telegram("sendDocument", {
+                    "chat_id": user_id,
+                    "document": m["file_id"],
+                    "caption": cap[:1020],
+                    "parse_mode": "HTML",
+                })
+            else:
+                await telegram("sendPhoto", {
+                    "chat_id": user_id,
+                    "photo": m["file_id"],
+                    "caption": cap[:1020],
+                    "parse_mode": "HTML",
+                })
+            sent += 1
+        except Exception:
+            log.exception("Failed delivering ticket media %s to %s", m["id"], user_id)
+    return sent
+
 
 async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, is_lifetime_override=False, title_override=None):
     if days_override is not None:
@@ -1269,16 +1481,22 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
     receipt_line = f"🧾 Receipt: <code>{html_escape(receipt)}</code>\n" if receipt else ""
 
-    # Ticket-only item (0 VIP days): send confirmation & direct support link
+    # Deliver any uploaded ticket images automatically first
+    delivered_media = await send_offer_ticket_media(user_id, plan_name, display_title, receipt=receipt)
+
     if days <= 0 and not is_lifetime:
+        media_note = (
+            f"🖼️ Delivered <b>{delivered_media}</b> ticket image(s) above!"
+            if delivered_media > 0
+            else f"✅ Payment confirmed! Admin ({BRAND_TAG}) has been notified."
+        )
         await send_message(
             user_id,
-            f"🎉 <b>TICKET PAYMENT CONFIRMED!</b>\n\n"
+            f"🎉 <b>PAYMENT CONFIRMED!</b>\n\n"
             f"👑 <b>{PROJECT_NAME} ({BRAND_TAG})</b>\n"
             f"🎫 Ticket: <b>{html_escape(display_title)}</b>\n"
             f"{receipt_line}\n"
-            f"✅ Your payment has been verified and Admin ({BRAND_TAG}) has been notified to deliver your ticket.\n"
-            "👇 Tap below if you want to message Admin directly:",
+            f"{media_note}",
             {
                 "inline_keyboard": [
                     [{"text": f"💬 Contact {BRAND_TAG}", "url": contact_url, "style": "success"}],
@@ -1323,13 +1541,14 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
             invite_payload["expire_date"] = int(expiry.timestamp())
         invite = await telegram("createChatInviteLink", invite_payload)
         exp_text = "Never (Lifetime)" if is_lifetime else format_local_time(expiry, prefs["tz"])
+        media_line = f"🖼️ Sent <b>{delivered_media}</b> ticket image(s) above!\n" if delivered_media > 0 else ""
 
         await send_message(
             user_id,
-            f"🎉 <b>VIP MEMBERSHIP ACTIVATED!</b>\n\n"
+            f"🎉 <b>VIP ACCESS ACTIVATED!</b>\n\n"
             f"👑 <b>{PROJECT_NAME} ({BRAND_TAG})</b>\n"
             f"💎 Item: <b>{html_escape(display_title)}</b>\n"
-            f"{receipt_line}"
+            f"{receipt_line}{media_line}"
             f"📅 Expires: <b>{exp_text}</b>\n\n"
             "👇 Tap below to enter the VIP channel:",
             {
@@ -1347,13 +1566,24 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
 async def finalize_paid_order(order, verified=None, callback_data=None, manual_admin=False):
     external_ref = order["external_ref"]
     if not manual_admin:
-        status = str((verified or {}).get("status", "")).upper()
+        status = str((verified or {}).get("status") or (verified or {}).get("transaction_status") or "").upper()
         if status == "FAILED":
             with connect_db() as db:
                 cur = db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=? AND status='PENDING'", (external_ref,))
             if cur.rowcount > 0:
                 try:
-                    await send_message(int(order["user_id"]), "❌ <b>Payment failed or was cancelled.</b>", main_menu_keyboard(int(order["user_id"])))
+                    await send_message(
+                        int(order["user_id"]),
+                        "❌ <b>STK Push failed or was cancelled.</b>\nYou can still pay manually via Till <code>"
+                        + html_escape(get_setting("mpesa_till_number", DEFAULT_MPESA_TILL))
+                        + "</code> and send your screenshot!",
+                        {
+                            "inline_keyboard": [
+                                [{"text": f"🏪 Pay via Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)}", "callback_data": f"manualtill:{external_ref}", "style": "success"}],
+                                [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                            ]
+                        },
+                    )
                 except Exception:
                     pass
             return "FAILED"
@@ -1369,7 +1599,7 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
     receipt = (callback_data or {}).get("MpesaReceiptNumber") or (verified or {}).get("provider_reference") or order["mpesa_receipt"]
     with connect_db() as db:
         cur = db.execute(
-            "UPDATE orders SET status='PAID', mpesa_receipt=COALESCE(?, mpesa_receipt) WHERE external_ref=? AND status IN ('PENDING','PENDING_REVIEW')",
+            "UPDATE orders SET status='PAID', mpesa_receipt=COALESCE(?, mpesa_receipt) WHERE external_ref=? AND status IN ('PENDING','PENDING_PROOF','PENDING_REVIEW')",
             (receipt, external_ref),
         )
         updated = cur.rowcount
@@ -1403,7 +1633,7 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
 
 async def process_payhero_callback(payload):
     data = payload.get("response", payload)
-    external_ref = data.get("ExternalReference")
+    external_ref = data.get("ExternalReference") or data.get("external_reference")
     if not external_ref:
         return
     with connect_db() as db:
@@ -1412,6 +1642,83 @@ async def process_payhero_callback(payload):
         return
     verified = await verify_payhero_transaction(order["payhero_reference"])
     await finalize_paid_order(order, verified=verified, callback_data=data)
+
+
+async def handle_payment_proof_submission(user_id, chat_id, external_ref, text, photo_file_id):
+    with connect_db() as db:
+        order = db.execute("SELECT * FROM orders WHERE external_ref=? AND user_id=?", (external_ref, user_id)).fetchone()
+    if not order:
+        await send_message(chat_id, "⚠️ Order not found. Please start checkout again.", main_menu_keyboard(user_id))
+        return
+    if order["status"] == "PAID":
+        await send_message(chat_id, "✅ This order is already confirmed and delivered!", main_menu_keyboard(user_id))
+        return
+
+    if not photo_file_id and not text:
+        await send_message(chat_id, "⚠️ Please send your payment screenshot (photo) or transaction details.")
+        return
+
+    receipt_note = text[:120] if text else "SCREENSHOT"
+    with connect_db() as db:
+        db.execute(
+            "UPDATE orders SET status='PENDING_REVIEW', proof_file_id=COALESCE(?, proof_file_id), mpesa_receipt=? WHERE external_ref=?",
+            (photo_file_id, receipt_note, external_ref),
+        )
+        order = db.execute("SELECT * FROM orders WHERE external_ref=?", (external_ref,)).fetchone()
+
+    item_title = format_order_item_name(order["plan"])
+    amt_display = order["local_amount"] or f"KES {order['amount']:,}"
+    u = get_user(user_id)
+    uname = f"@{u['username']}" if (u and u["username"]) else (u["first_name"] if u else str(user_id))
+
+    auto_deliver = get_setting("auto_confirm_screenshot", "0") == "1" and bool(photo_file_id)
+
+    admin_caption = (
+        f"📸 <b>PAYMENT SCREENSHOT {'(AUTO-DELIVERED)' if auto_deliver else 'FOR CONFIRMATION'}</b>\n\n"
+        f"👤 User: {html_escape(uname)} (<code>{user_id}</code>)\n"
+        f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
+        f"💰 Amount: <b>{html_escape(amt_display)}</b>\n"
+        f"💳 Method: <code>{html_escape(order['provider'].upper())}</code>\n"
+        f"🔗 Ref: <code>{external_ref}</code>\n"
+        + (f"📝 Note/Code: <code>{html_escape(text[:200])}</code>" if text else "")
+    )
+
+    admin_kb = (
+        None
+        if auto_deliver
+        else {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ Confirm & Deliver Now", "callback_data": f"admin:approve:{external_ref}", "style": "success"},
+                    {"text": "❌ Reject", "callback_data": f"admin:reject:{external_ref}", "style": "danger"},
+                ],
+                [{"text": "💬 Reply to User", "callback_data": f"admin:reply:{user_id}", "style": "primary"}],
+            ]
+        }
+    )
+
+    if photo_file_id:
+        await telegram("sendPhoto", {
+            "chat_id": ADMIN_USER_ID,
+            "photo": photo_file_id,
+            "caption": admin_caption[:1020],
+            "parse_mode": "HTML",
+            **({"reply_markup": admin_kb} if admin_kb else {}),
+        })
+    else:
+        await send_message(ADMIN_USER_ID, admin_caption, admin_kb)
+
+    if auto_deliver:
+        await finalize_paid_order(order, manual_admin=True)
+    else:
+        await send_message(
+            chat_id,
+            "✅ <b>PAYMENT SCREENSHOT RECEIVED!</b>\n\n"
+            f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
+            f"🔗 Order Ref: <code>{external_ref}</code>\n\n"
+            "⏳ Confirming your payment now — once confirmed, you will <b>automatically receive</b> your ticket images & VIP access right here!",
+            {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
+        )
 
 
 # --------------------------------------------------
@@ -1517,7 +1824,7 @@ async def publish_vip_post(selected_btn_ids=None, include_footer=True, include_r
             f"👑 <b>{PROJECT_NAME}</b> ({BRAND_TAG})\n\n"
             f"🎯 {html_escape(get_setting('vip_odds_info'))}\n\n"
             "⚡ Data-driven football analysis, VIP picks & accumulator tickets.\n"
-            "🌍 Supports international currencies & verified payments.\n\n"
+            "🌍 Supports M-Pesa, Airtel Money & international payments.\n\n"
             "👇 <b>TAP BELOW TO JOIN VIP OR GET A TICKET</b>"
         ),
         "reply_markup": channel_post_keyboard(selected_btn_ids=sel_btns, include_footer=include_footer, include_reactions=False),
@@ -1570,6 +1877,28 @@ async def publish_custom_main_post(text_body="", photo_file_id=None, selected_bt
     return msg
 
 
+async def publish_vip_channel_post(text_body="", photo_file_id=None):
+    vip_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID)
+    formatted = (
+        f"💎 <b>{PROJECT_NAME} — VIP EXCLUSIVE</b> ({BRAND_TAG})\n\n{html_escape(text_body)}"
+        if text_body
+        else f"💎 <b>{PROJECT_NAME} — VIP EXCLUSIVE</b> ({BRAND_TAG})"
+    )
+    if photo_file_id:
+        return await telegram("sendPhoto", {
+            "chat_id": vip_chat,
+            "photo": photo_file_id,
+            "caption": formatted[:1020],
+            "parse_mode": "HTML",
+        })
+    return await telegram("sendMessage", {
+        "chat_id": vip_chat,
+        "text": formatted[:4090],
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    })
+
+
 # --------------------------------------------------
 # USER VIEWS (WELCOME, COUNTRY, TICKET CHECKOUT, ACCUM, VIP, STATS)
 # --------------------------------------------------
@@ -1606,6 +1935,8 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         return
 
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
+    till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+    airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
     prefs = get_user_prefs(user_id)
     price = int(b["price"])
     days = int(b["days"])
@@ -1630,14 +1961,18 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         if ok:
             price_line = conv
 
-    days_line = f"⏳ Access Duration: <b>{days} Day{'s' if days != 1 else ''} VIP</b>\n" if days > 0 else "🎟️ Type: <b>Special Ticket Delivery</b>\n"
+    img_cnt = count_offer_media(f"btn:{b['id']}")
+    days_line = f"⏳ Access Duration: <b>{days} Day{'s' if days != 1 else ''} VIP</b>\n" if days > 0 else "🎟️ Type: <b>Instant Ticket Image Delivery</b>\n"
+    img_line = f"🖼️ Ready for Auto-Delivery: <b>{img_cnt} Ticket Image(s)</b>\n" if img_cnt > 0 else ""
     desc_line = f"📝 {html_escape(desc)}\n" if desc else ""
 
     kb_rows = []
     if price > 0:
-        kb_rows.append([{"text": f"🇰🇪 Pay KES {price:,} via M-Pesa (PayHero)", "callback_data": f"buybtn:{b['id']}:mpesa", "style": "success"}])
+        kb_rows.append([{"text": f"📲 Kenya: M-Pesa STK Push (KES {price:,})", "callback_data": f"buybtn:{b['id']}:mpesa", "style": "success"}])
+        kb_rows.append([{"text": f"🏪 Kenya: Manual M-Pesa Till {till_no}", "callback_data": f"buybtn:{b['id']}:mpesa_till", "style": "primary"}])
+        kb_rows.append([{"text": f"🔴 TZ / UG / ZM: Airtel Money ({airtel_no})", "callback_data": f"buybtn:{b['id']}:airtel", "style": "danger"}])
         kb_rows.append([{"text": f"🌍 Other Countries: Contact {BRAND_TAG}", "url": contact_url, "style": "primary"}])
-        kb_rows.append([{"text": "🧾 Submit International Payment Ref", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
+        kb_rows.append([{"text": "📸 Send Payment Screenshot", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
     else:
         kb_rows.append([{"text": f"💬 Contact {BRAND_TAG} to Get Ticket", "url": contact_url, "style": "success"}])
     kb_rows.append([{"text": "🏠 Main Menu", "callback_data": "menu:home"}])
@@ -1647,12 +1982,12 @@ async def show_ticket_button_checkout(chat_id, user_id, btn_id):
         f"🎫 <b>{html_escape(b['label'])}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 Price: <b>{html_escape(price_line if price > 0 else 'Contact Admin')}</b>\n"
-        f"{days_line}{desc_line}\n"
+        f"{days_line}{img_line}{desc_line}\n"
         f"💳 <b>HOW TO PAY:</b>\n"
-        f"🇰🇪 <b>For Kenyans (Instant M-Pesa PayHero):</b>\n"
-        f"Tap <b>\"Pay via M-Pesa (PayHero)\"</b> below, enter your Safaricom number (07/01), and enter your M-Pesa PIN. Verified automatically!\n\n"
-        f"🌍 <b>For Other Countries (UG, TZ, NG, GH, ZA, UK, US, EU, etc.):</b>\n"
-        f"Contact Admin <b>{BRAND_TAG}</b> directly for Mobile Money, Bank Transfer, PayPal, or USDT payment instructions.",
+        f"🇰🇪 <b>Kenya:</b> Use instant <b>M-Pesa STK Push (PayHero)</b> OR pay manually to Buy Goods Till <code>{html_escape(till_no)}</code>.\n"
+        f"🇹🇿🇺🇬🇿🇲 <b>Tanzania, Uganda & Zambia:</b> Send via <b>Airtel Money</b> to <code>{html_escape(airtel_no)}</code>.\n"
+        f"🌍 <b>Other Countries:</b> Contact Admin <b>{BRAND_TAG}</b>.\n\n"
+        f"📸 <i>After paying manually, send your payment screenshot here for confirmation & automatic delivery!</i>",
         {"inline_keyboard": kb_rows},
     )
 
@@ -1772,7 +2107,7 @@ async def show_stats_and_results(chat_id, user_id, only_settled=False):
 
 
 # --------------------------------------------------
-# ADMIN BUTTONS MANAGER & CHANNEL POST BUTTON PICKER
+# ADMIN BUTTONS MANAGER, TICKET IMAGES & BUTTON PICKER
 # --------------------------------------------------
 
 async def show_admin_buttons(chat_id, message_id=None):
@@ -1782,9 +2117,10 @@ async def show_admin_buttons(chat_id, message_id=None):
     for b in buttons:
         status_dot = "🟢" if b["is_active"] else "⚫"
         if b["button_type"] == "URL":
-            info = f"🔗 Link"
+            info = "🔗 Link"
         else:
-            info = f"💰 KES {int(b['price']):,} · {int(b['days'])}d"
+            img_c = count_offer_media(f"btn:{b['id']}")
+            info = f"💰 KES {int(b['price']):,} · {int(b['days'])}d · 🖼️{img_c}"
         lines.append(f"{status_dot} <b>{html_escape(b['label'])}</b> — {info}")
         rows.append([{"text": f"⚙️ {b['label']} ({info})", "callback_data": f"admin:btn_view:{b['id']}", "style": b["style"] if b["style"] in BUTTON_STYLES else "primary"}])
 
@@ -1797,7 +2133,7 @@ async def show_admin_buttons(chat_id, message_id=None):
     text = (
         "🎛️ <b>CHANNEL BUTTONS & TICKETS MANAGER</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Create, edit, price, or remove buttons. When posting to the main channel, you can pick which of these buttons appear on each post!\n\n"
+        "Tap any button to set its <b>price</b>, upload <b>ticket images</b> (auto-sent after payment confirmation), edit label/color, or remove it.\n\n"
         + ("\n".join(lines) if lines else "<i>No buttons configured yet.</i>")
     )
     await edit_or_send(chat_id, message_id, text, {"inline_keyboard": rows})
@@ -1825,18 +2161,22 @@ async def show_admin_button_detail(chat_id, btn_id, message_id=None):
             [{"text": "⬅️ All Buttons", "callback_data": "admin:buttons"}],
         ]
     else:
-        days_str = f"{b['days']} day(s) VIP access" if int(b["days"]) > 0 else "0 (Ticket delivery / manual)"
+        img_count = count_offer_media(f"btn:{b['id']}")
+        days_str = f"{b['days']} day(s) VIP access" if int(b["days"]) > 0 else "0 (Ticket images delivery only)"
         detail_text = (
             f"🎫 <b>TICKET BUTTON #{b['id']}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Label: <b>{html_escape(b['label'])}</b>\n"
-            f"Payment (KE PayHero): <b>KES {int(b['price']):,}</b>\n"
+            f"Payment (KE PayHero / Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)}): <b>KES {int(b['price']):,}</b>\n"
+            f"TZ / UG / ZM (Airtel): <code>{html_escape(get_setting('airtel_money_number', DEFAULT_AIRTEL_NUMBER))}</code>\n"
             f"Other Countries: <b>Contact {BRAND_TAG}</b>\n"
             f"VIP Days on Pay: <b>{days_str}</b>\n"
+            f"Ticket Images Uploaded: <b>{img_count}</b>\n"
             f"Color: {style_name}\n"
             f"Description: <i>{html_escape(b['description'] or 'None')}</i>"
         )
         rows = [
+            [{"text": f"🖼️ Ticket Images ({img_count}) — Upload/Manage", "callback_data": f"admin:btn_media:{b['id']}", "style": "success"}],
             [
                 {"text": f"💰 Set Price (KES {int(b['price']):,})", "callback_data": f"admin:btn_setprice:{b['id']}", "style": "success"},
                 {"text": f"📅 VIP Days ({b['days']}d)", "callback_data": f"admin:btn_setdays:{b['id']}", "style": "primary"},
@@ -1852,6 +2192,31 @@ async def show_admin_button_detail(chat_id, btn_id, message_id=None):
             [{"text": "⬅️ All Buttons", "callback_data": "admin:buttons"}],
         ]
     await edit_or_send(chat_id, message_id, detail_text, {"inline_keyboard": rows})
+
+
+async def show_admin_button_media(chat_id, btn_id, message_id=None):
+    b = get_custom_button(btn_id)
+    if not b:
+        await show_admin_buttons(chat_id, message_id)
+        return
+    media_rows = get_offer_media(f"btn:{btn_id}")
+    rows = [
+        [{"text": "➕ Upload Ticket Image(s)", "callback_data": f"admin:btn_media_add:{btn_id}", "style": "success"}],
+    ]
+    if media_rows:
+        rows.append([
+            {"text": f"👁️ Preview ({len(media_rows)})", "callback_data": f"admin:btn_media_prev:{btn_id}", "style": "primary"},
+            {"text": "🗑️ Clear All Images", "callback_data": f"admin:btn_media_clr:{btn_id}", "style": "danger"},
+        ])
+    rows.append([{"text": "⬅️ Back to Button", "callback_data": f"admin:btn_view:{btn_id}"}])
+
+    text = (
+        f"🖼️ <b>TICKET IMAGES — {html_escape(b['label'])}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Saved Images: <b>{len(media_rows)}</b>\n\n"
+        "Any ticket images uploaded here are <b>automatically delivered</b> to customers the moment their payment is confirmed!"
+    )
+    await edit_or_send(chat_id, message_id, text, {"inline_keyboard": rows})
 
 
 async def show_post_button_picker(chat_id, user_id, picker, message_id=None):
@@ -1919,6 +2284,8 @@ async def handle_message(message):
     chat_id = message.get("chat", {}).get("id")
     photo_list = message.get("photo") or []
     photo_file_id = photo_list[-1]["file_id"] if photo_list else None
+    doc_obj = message.get("document")
+    doc_file_id = doc_obj["file_id"] if doc_obj else None
     text = (message.get("text") or message.get("caption") or "").strip()
 
     if not user_id or not chat_id:
@@ -1936,7 +2303,6 @@ async def handle_message(message):
         await send_message(chat_id, "🚫 Your account has been suspended.")
         return
 
-    # Handle shared GPS location ONLY when user explicitly opted in
     if message.get("location"):
         sess = get_session(user_id)
         if sess and sess["state"] == "WAIT_LOCATION_PERM":
@@ -1986,6 +2352,17 @@ async def handle_message(message):
             clear_session(user_id)
             await send_message(chat_id, "🛑 Cancelled.", {"remove_keyboard": True})
             await show_main_menu(chat_id, user_id)
+            return
+
+        if cmd == "/done" and is_staff(user_id):
+            sess = get_session(user_id)
+            if sess and sess["state"] == "WAIT_BTN_MEDIA":
+                btn_id = int(sess["payload"])
+                clear_session(user_id)
+                await show_admin_button_media(chat_id, btn_id)
+                return
+            clear_session(user_id)
+            await send_message(chat_id, "✅ Done.", admin_keyboard(user_id))
             return
 
         if cmd == "/admin":
@@ -2068,7 +2445,11 @@ async def handle_message(message):
 
         if cmd == "/setsetting" and is_super_admin(user_id):
             parts = text.split(None, 2)
-            allowed = {"main_channel_id", "vip_channel_id", "main_channel_url", "payhero_channel_id", "vip_odds_info", "admin_contact_url", "website_url"}
+            allowed = {
+                "main_channel_id", "vip_channel_id", "main_channel_url",
+                "payhero_channel_id", "mpesa_till_number", "airtel_money_number",
+                "vip_odds_info", "admin_contact_url", "website_url",
+            }
             if len(parts) != 3 or parts[1] not in allowed:
                 await send_message(chat_id, f"Allowed keys: {', '.join(sorted(allowed))}")
                 return
@@ -2106,10 +2487,9 @@ async def handle_message(message):
             await start_mpesa_payment(user_id, payload, phone, notify_telegram=True)
             return
 
-        if state.startswith("WAIT_INTL_"):
-            provider = state.replace("WAIT_INTL_", "").lower()
+        if state == "WAIT_PAYMENT_PROOF":
             clear_session(user_id)
-            await submit_international_reference(user_id, payload, provider, text)
+            await handle_payment_proof_submission(user_id, chat_id, payload, text, photo_file_id)
             return
 
         if state == "WAIT_SUPPORT_MSG":
@@ -2145,12 +2525,54 @@ async def handle_message(message):
             await send_message(chat_id, "✅ Published to Main Channel with your selected buttons!", admin_keyboard(user_id))
             return
 
+        if state == "WAIT_VIP_CHANNEL_POST" and is_staff(user_id):
+            if not text and not photo_file_id:
+                await send_message(chat_id, "⚠️ Send text or a photo+caption to post to the VIP Channel (or /cancel).")
+                return
+            await publish_vip_channel_post(text, photo_file_id=photo_file_id)
+            log_audit(user_id, "VIP_CHANNEL_POST", text[:80] or "photo")
+            await send_message(
+                chat_id,
+                "✅ Published to <b>VIP Channel</b>!\n\nSend another VIP post/image right now, or tap <b>Done</b>:",
+                {"inline_keyboard": [[{"text": "✅ Done — Admin Dashboard", "callback_data": "admin:home", "style": "success"}]]},
+            )
+            return
+
+        if state == "WAIT_BTN_MEDIA" and is_staff(user_id):
+            btn_id = int(payload)
+            b = get_custom_button(btn_id)
+            if not b:
+                clear_session(user_id)
+                await show_admin_buttons(chat_id)
+                return
+            if photo_file_id:
+                fid, mtype = photo_file_id, "photo"
+            elif doc_file_id:
+                fid, mtype = doc_file_id, "document"
+            else:
+                await send_message(chat_id, "⚠️ Please send a <b>ticket image (photo)</b>, or tap Done / /done.")
+                return
+            offer_key = f"btn:{btn_id}"
+            with connect_db() as db:
+                db.execute(
+                    "INSERT INTO ticket_media(offer_key,file_id,media_type,caption,created_at) VALUES(?,?,?,?,?)",
+                    (offer_key, fid, mtype, text[:400], utcnow().isoformat()),
+                )
+            cnt = count_offer_media(offer_key)
+            log_audit(user_id, "UPLOAD_TICKET_MEDIA", f"btn:{btn_id} total={cnt}")
+            await send_message(
+                chat_id,
+                f"✅ Saved ticket image <b>#{cnt}</b> for <b>{html_escape(b['label'])}</b>!\nSend another image if needed, or tap Done:",
+                {"inline_keyboard": [[{"text": "✅ Done Uploading", "callback_data": f"admin:btn_media:{btn_id}", "style": "success"}]]},
+            )
+            return
+
         if state == "WAIT_BTN_ADD_TICKET" and is_staff(user_id):
             parts = [p.strip() for p in text.split("|")]
             if len(parts) >= 2 and parts[0]:
                 label = parts[0][:64]
                 if not parts[1].isdigit():
-                    await send_message(chat_id, "⚠️ Price must be a whole number in KES. Example:\n<code>💎 Diamond Ticket | 1500 | 7</code>")
+                    await send_message(chat_id, "⚠️ Price must be a whole number in KES. Example:\n<code>💎 Diamond Ticket | 1500 | 0</code>")
                     return
                 price = int(parts[1])
                 days = int(parts[2]) if (len(parts) >= 3 and parts[2].isdigit()) else 1
@@ -2218,7 +2640,7 @@ async def handle_message(message):
 
         if state == "WAIT_BTN_SETDAYS" and is_staff(user_id):
             if not text.isdigit():
-                await send_message(chat_id, "⚠️ Enter a whole number of days (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for manual ticket delivery).")
+                await send_message(chat_id, "⚠️ Enter a whole number of days (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket image delivery only).")
                 return
             btn_id = int(payload)
             clear_session(user_id)
@@ -2281,7 +2703,7 @@ async def handle_message(message):
 
 
 # --------------------------------------------------
-# CALLBACK HANDLER (MENU, REACTIONS, COUNTRY, BUTTONS, ADMIN)
+# CALLBACK HANDLER
 # --------------------------------------------------
 
 async def handle_callback(query):
@@ -2293,7 +2715,6 @@ async def handle_callback(query):
     chat_id = msg_obj.get("chat", {}).get("id") or user_id
     message_id = msg_obj.get("message_id")
 
-    # Genuine channel post reaction button tap
     if data.startswith("react:"):
         idx = int(data.split(":", 1)[1])
         if 0 <= idx < len(REACTION_EMOJIS) and message_id:
@@ -2523,7 +2944,16 @@ async def handle_callback(query):
         prefs = get_user_prefs(user_id)
         c = COUNTRIES.get(prefs["country"], COUNTRIES["US"])
         disp, _ = format_converted_price(plan["price"], prefs["currency"])
-        rows = [[{"text": METHOD_LABELS[m][0], "callback_data": f"pay:{plan_name}:{m}", "style": METHOD_LABELS[m][1]}] for m in c["methods"]]
+        till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+        airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
+        rows = []
+        for m in c["methods"]:
+            lbl, sty = METHOD_LABELS[m]
+            if m == "mpesa_till":
+                lbl = f"🏪 Manual M-Pesa Till ({till_no})"
+            elif m == "airtel":
+                lbl = f"🔴 Airtel Money ({airtel_no})"
+            rows.append([{"text": lbl, "callback_data": f"pay:{plan_name}:{m}", "style": sty}])
         rows.append([{"text": "⬅️ Back", "callback_data": "menu:vip"}])
         await send_message(chat_id, f"💳 <b>{html_escape(plan['title'])}</b> — {disp}\n\n<b>Payment Guide ({c['name']}):</b>\n{c['how']}", {"inline_keyboard": rows})
         return
@@ -2535,8 +2965,7 @@ async def handle_callback(query):
             set_session(user_id, "WAIT_MPESA_PHONE", plan_name)
             await send_message(chat_id, "📱 Enter your Kenyan Safaricom number (<code>0712345678</code>) or /cancel:")
         else:
-            set_session(user_id, f"WAIT_INTL_{provider.upper()}", plan_name)
-            await send_message(chat_id, f"💳 Contact {BRAND_TAG} for {provider.upper()} details, then reply with:\n<code>YourPhoneOrEmail | TransactionID</code>")
+            await create_manual_order_and_prompt(user_id, plan_name, provider)
         return
 
     if data.startswith("buybtn:"):
@@ -2549,21 +2978,44 @@ async def handle_callback(query):
             await answer_callback(cid, "Unavailable")
             return
         await answer_callback(cid)
+        offer_key = f"btn:{b['id']}"
         if method == "mpesa":
-            set_session(user_id, "WAIT_MPESA_PHONE", f"btn:{b['id']}")
+            set_session(user_id, "WAIT_MPESA_PHONE", offer_key)
             await send_message(
                 chat_id,
                 f"📲 <b>Pay KES {int(b['price']):,} for {html_escape(b['label'])}</b>\n\n"
                 "Enter your Kenyan Safaricom number (e.g. <code>0712345678</code>) or /cancel:",
             )
         else:
-            set_session(user_id, "WAIT_INTL_TICKET", f"btn:{b['id']}")
-            await send_message(
-                chat_id,
-                f"🌍 <b>International Payment — {html_escape(b['label'])}</b>\n\n"
-                f"1️⃣ Contact Admin <b>{BRAND_TAG}</b> to get payment details for your country.\n"
-                f"2️⃣ After sending payment, reply here with:\n<code>YourPhoneOrEmail | TransactionID</code>\n\n(Or send /cancel)",
-            )
+            await create_manual_order_and_prompt(user_id, offer_key, method)
+        return
+
+    if data.startswith("manualtill:"):
+        ext_ref = data.split(":", 1)[1]
+        with connect_db() as db:
+            order = db.execute("SELECT * FROM orders WHERE external_ref=? AND user_id=?", (ext_ref, user_id)).fetchone()
+        if not order:
+            await answer_callback(cid, "Order not found")
+            return
+        await answer_callback(cid)
+        await send_manual_till_fallback(user_id, ext_ref, format_order_item_name(order["plan"]), order["amount"])
+        return
+
+    if data.startswith("proof:"):
+        ext_ref = data.split(":", 1)[1]
+        with connect_db() as db:
+            order = db.execute("SELECT * FROM orders WHERE external_ref=? AND user_id=?", (ext_ref, user_id)).fetchone()
+        if not order:
+            await answer_callback(cid, "Order not found")
+            return
+        await answer_callback(cid)
+        set_session(user_id, "WAIT_PAYMENT_PROOF", ext_ref)
+        await send_message(
+            chat_id,
+            f"📸 <b>SEND PAYMENT SCREENSHOT</b>\n\n"
+            f"Order Ref: <code>{ext_ref}</code>\n"
+            "Send your payment screenshot (photo) right here now (or send /cancel):",
+        )
         return
 
     if data.startswith("verify:"):
@@ -2574,10 +3026,17 @@ async def handle_callback(query):
             await answer_callback(cid, "Processing...")
             return
         await answer_callback(cid, "Checking...")
-        verified = await verify_payhero_transaction(order["payhero_reference"])
-        res = await finalize_paid_order(order, verified=verified)
-        if res == "PENDING":
-            await send_message(user_id, "⏳ Still pending on M-Pesa. Tap Verify again shortly.")
+        try:
+            verified = await verify_payhero_transaction(order["payhero_reference"])
+            res = await finalize_paid_order(order, verified=verified)
+            if res == "PENDING":
+                till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+                await send_message(
+                    user_id,
+                    f"⏳ Still pending on M-Pesa. Tap Verify again shortly, or pay manually via Till <code>{till_no}</code> and send your screenshot.",
+                )
+        except Exception:
+            await send_message(user_id, "⚠️ Could not reach PayHero status right now. Try again in a moment or upload screenshot.")
         return
 
     # ---- POST BUTTON PICKER CALLBACKS ----
@@ -2703,18 +3162,24 @@ async def handle_callback(query):
             await answer_callback(cid)
             await show_admin_transactions(chat_id, user_id)
         elif action == "approve" and len(parts) == 3 and is_super_admin(user_id):
-            await answer_callback(cid)
+            await answer_callback(cid, "Confirmed & Delivering")
             with connect_db() as db:
                 order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
             if order:
-                await finalize_paid_order(order, manual_admin=True)
+                res = await finalize_paid_order(order, manual_admin=True)
                 log_audit(user_id, "APPROVE_ORDER", parts[2])
-                await send_message(chat_id, f"✅ Approved {parts[2]}.")
+                await send_message(chat_id, f"✅ Confirmed & delivered {parts[2]} ({res}).")
         elif action == "reject" and len(parts) == 3 and is_super_admin(user_id):
-            await answer_callback(cid)
+            await answer_callback(cid, "Rejected")
             with connect_db() as db:
+                order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
                 db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=?", (parts[2],))
             log_audit(user_id, "REJECT_ORDER", parts[2])
+            if order:
+                try:
+                    await send_message(int(order["user_id"]), f"❌ Payment confirmation for <code>{parts[2]}</code> was rejected. Contact {BRAND_TAG} if you need help.")
+                except Exception:
+                    pass
             await send_message(chat_id, f"🚫 Rejected {parts[2]}.")
         elif action == "users":
             await answer_callback(cid)
@@ -2725,6 +3190,38 @@ async def handle_callback(query):
         elif action == "btn_view" and len(parts) == 3 and parts[2].isdigit():
             await answer_callback(cid)
             await show_admin_button_detail(chat_id, int(parts[2]), message_id=message_id)
+        elif action == "btn_media" and len(parts) == 3 and parts[2].isdigit():
+            clear_session(user_id)
+            await answer_callback(cid)
+            await show_admin_button_media(chat_id, int(parts[2]), message_id=message_id)
+        elif action == "btn_media_add" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            b = get_custom_button(bid)
+            await answer_callback(cid)
+            if b:
+                set_session(user_id, "WAIT_BTN_MEDIA", str(bid))
+                await send_message(
+                    chat_id,
+                    f"🖼️ <b>UPLOAD TICKET IMAGES — {html_escape(b['label'])}</b>\n\n"
+                    "Send one or more <b>ticket photos</b> (with optional caption) right here.\n"
+                    "Every paying buyer will receive these images automatically once confirmed!\n\n"
+                    "Tap /done when finished (or /cancel).",
+                )
+        elif action == "btn_media_prev" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            b = get_custom_button(bid)
+            await answer_callback(cid)
+            if b:
+                sent = await send_offer_ticket_media(chat_id, f"btn:{bid}", b["label"])
+                if sent == 0:
+                    await send_message(chat_id, "No images saved yet.")
+        elif action == "btn_media_clr" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            with connect_db() as db:
+                db.execute("DELETE FROM ticket_media WHERE offer_key=?", (f"btn:{bid}",))
+            log_audit(user_id, "CLEAR_TICKET_MEDIA", f"btn:{bid}")
+            await answer_callback(cid, "Cleared all images")
+            await show_admin_button_media(chat_id, bid, message_id=message_id)
         elif action == "btn_add_ticket":
             await answer_callback(cid)
             set_session(user_id, "WAIT_BTN_ADD_TICKET")
@@ -2735,7 +3232,7 @@ async def handle_callback(query):
                 "<code>Button Name | Price in KES | VIP Days</code>\n\n"
                 "Examples:\n"
                 "<code>🔵 Get Blue Ticket | 500 | 1</code>\n"
-                "<code>💎 Diamond Ticket | 2000 | 0</code> <i>(0 days = ticket delivery without auto VIP channel link)</i>\n\n"
+                "<code>💎 Diamond Ticket | 2000 | 0</code> <i>(0 days = deliver ticket images only)</i>\n\n"
                 "Or just send the <b>Button Name</b> and I will ask for the price next (or /cancel):",
             )
         elif action == "btn_add_url":
@@ -2753,7 +3250,7 @@ async def handle_callback(query):
         elif action == "btn_setdays" and len(parts) == 3 and parts[2].isdigit():
             await answer_callback(cid)
             set_session(user_id, "WAIT_BTN_SETDAYS", parts[2])
-            await send_message(chat_id, "📅 Enter <b>VIP access days</b> granted after payment (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket-only confirmation):")
+            await send_message(chat_id, "📅 Enter <b>VIP access days</b> granted after payment (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket images delivery only):")
         elif action == "btn_rename" and len(parts) == 3 and parts[2].isdigit():
             await answer_callback(cid)
             set_session(user_id, "WAIT_BTN_RENAME", parts[2])
@@ -2800,6 +3297,14 @@ async def handle_callback(query):
         elif action == "post_channel":
             await answer_callback(cid)
             await show_post_button_picker(chat_id, user_id, {"mode": "custom", "btn_ids": [], "footer": True, "react": True})
+        elif action == "post_vip_channel":
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_VIP_CHANNEL_POST")
+            await send_message(
+                chat_id,
+                f"💎 <b>POST TO VIP CHANNEL</b> (<code>{html_escape(get_setting('vip_channel_id', VIP_CHANNEL_ID))}</code>)\n\n"
+                "Send your VIP picks text, or send a ticket image/photo with caption right now (or /cancel):",
+            )
         elif action == "post":
             await answer_callback(cid)
             await show_post_button_picker(chat_id, user_id, {"mode": "vip_promo", "btn_ids": [], "footer": True, "react": True})
@@ -2820,11 +3325,14 @@ async def handle_callback(query):
             await send_message(chat_id, f"💰 Enter new KES price for <b>{parts[2]}</b>:")
         elif action == "channels" and is_super_admin(user_id):
             await answer_callback(cid)
-            await send_message(
-                chat_id,
-                f"⚙️ <b>SETTINGS</b>\nMain: <code>{get_setting('main_channel_id')}</code>\nVIP: <code>{get_setting('vip_channel_id')}</code>\nWebsite: <code>{get_website_url()}</code>\n\nUse <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
-                admin_keyboard(user_id),
-            )
+            await show_admin_settings(chat_id, message_id=message_id)
+        elif action == "toggle_autoshot" and is_super_admin(user_id):
+            cur = get_setting("auto_confirm_screenshot", "0")
+            nxt = "0" if cur == "1" else "1"
+            set_setting("auto_confirm_screenshot", nxt)
+            log_audit(user_id, "TOGGLE_AUTOSHOT", nxt)
+            await answer_callback(cid, f"Screenshot Auto-Deliver: {'ON' if nxt == '1' else 'OFF'}")
+            await show_admin_settings(chat_id, message_id=message_id)
         elif action == "export" and is_super_admin(user_id):
             await answer_callback(cid)
             await export_csv_backups(chat_id)
@@ -2842,6 +3350,30 @@ async def handle_callback(query):
 # --------------------------------------------------
 # ADMIN HELPERS & CSV EXPORT
 # --------------------------------------------------
+
+async def show_admin_settings(chat_id, message_id=None):
+    auto_shot = get_setting("auto_confirm_screenshot", "0") == "1"
+    till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+    airtel_no = get_setting("airtel_money_number", DEFAULT_AIRTEL_NUMBER)
+    txt = (
+        "⚙️ <b>CHANNELS & PAYMENT SETTINGS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"📢 Main Channel: <code>{html_escape(get_setting('main_channel_id'))}</code>\n"
+        f"💎 VIP Channel: <code>{html_escape(get_setting('vip_channel_id'))}</code>\n"
+        f"🏪 Kenya Manual Till: <code>{html_escape(till_no)}</code>\n"
+        f"🔴 TZ/UG/ZM Airtel Money: <code>{html_escape(airtel_no)}</code>\n"
+        f"🌐 Website: <code>{html_escape(get_website_url())}</code>\n"
+        f"📸 Screenshot Auto-Deliver: <b>{'🟢 ON (Instant upon upload)' if auto_shot else '🔒 OFF (1-Tap Admin Confirm)'}</b>\n\n"
+        "Use <code>/setsetting &lt;key&gt; &lt;value&gt;</code> to update values."
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": f"📸 Screenshot Auto-Deliver: {'ON' if auto_shot else 'OFF'}", "callback_data": "admin:toggle_autoshot", "style": "success" if auto_shot else "primary"}],
+            [{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}],
+        ]
+    }
+    await edit_or_send(chat_id, message_id, txt, kb)
+
 
 async def show_admin_stats(chat_id, user_id):
     with connect_db() as db:
@@ -2939,6 +3471,21 @@ async def background_worker():
     while True:
         try:
             await refresh_exchange_rates(force=False)
+
+            # Poll recent pending PayHero STK orders in case callback was missed
+            cutoff_iso = (utcnow() - timedelta(minutes=30)).isoformat()
+            with connect_db() as db:
+                pending_stk = db.execute(
+                    "SELECT * FROM orders WHERE status='PENDING' AND provider='mpesa' AND payhero_reference IS NOT NULL AND created_at>=?",
+                    (cutoff_iso,),
+                ).fetchall()
+            for o in pending_stk:
+                try:
+                    verified = await verify_payhero_transaction(o["payhero_reference"])
+                    await finalize_paid_order(o, verified=verified)
+                except Exception:
+                    pass
+
             now_iso = utcnow().isoformat()
             remind_iso = (utcnow() + timedelta(hours=12)).isoformat()
             with connect_db() as db:
