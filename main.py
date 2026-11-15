@@ -71,10 +71,10 @@ PAYHERO_URL = "https://backend.payhero.co.ke/api/v2"
 STK_COOLDOWN_SECONDS = 45
 FX_CACHE_HOURS = 6
 REACTION_EMOJIS = ["🔥", "❤️", "💯", "🙏", "👍", "😍"]
+BUTTON_STYLES = ["primary", "success", "danger"]
 
 bot_username = None
 http_client: httpx.AsyncClient | None = None
-seen_media_groups = []
 
 # --------------------------------------------------
 # INTERNATIONAL COUNTRIES & 12 SUPPORTED CURRENCIES
@@ -188,6 +188,14 @@ class DBConn:
             cur.execute(adapted, params)
             return cur
         return self.raw.execute(adapted, params)
+
+
+def insert_returning_id(db, sql, params):
+    if USE_POSTGRES:
+        cur = db.execute(sql + " RETURNING id", params)
+        return int(cur.fetchone()["id"])
+    cur = db.execute(sql, params)
+    return int(cur.lastrowid)
 
 
 @contextmanager
@@ -352,7 +360,23 @@ def init_db():
             CREATE TABLE IF NOT EXISTS custom_buttons (
                 id {pk_auto},
                 label TEXT NOT NULL,
-                url TEXT NOT NULL
+                url TEXT NOT NULL DEFAULT '',
+                button_type TEXT NOT NULL DEFAULT 'TICKET',
+                price INTEGER NOT NULL DEFAULT 0,
+                days INTEGER NOT NULL DEFAULT 1,
+                description TEXT NOT NULL DEFAULT '',
+                style TEXT NOT NULL DEFAULT 'primary',
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS channel_posts (
+                channel_msg_id BIGINT PRIMARY KEY,
+                button_ids TEXT NOT NULL DEFAULT '[]',
+                include_reactions INTEGER NOT NULL DEFAULT 1,
+                include_footer INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
             )
         """)
 
@@ -388,6 +412,12 @@ def init_db():
         ensure_column(db, "subscriptions", "is_lifetime", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "subscriptions", "reminded", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(db, "matches", "market", "TEXT NOT NULL DEFAULT '1X2'")
+        ensure_column(db, "custom_buttons", "button_type", "TEXT NOT NULL DEFAULT 'URL'")
+        ensure_column(db, "custom_buttons", "price", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "custom_buttons", "days", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(db, "custom_buttons", "description", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "custom_buttons", "style", "TEXT NOT NULL DEFAULT 'primary'")
+        ensure_column(db, "custom_buttons", "is_active", "INTEGER NOT NULL DEFAULT 1")
 
         defaults_plans = [
             ("daily", "Daily VIP", 100, 1, "24 Hours VIP access • Daily single & combo picks", 0),
@@ -415,6 +445,27 @@ def init_db():
         }
         for k, v in default_settings.items():
             db.execute("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
+
+        seeded = db.execute("SELECT value FROM app_settings WHERE key='seeded_ticket_buttons'").fetchone()
+        if not seeded:
+            default_ticket_buttons = [
+                ("🔵 Get Blue Ticket", "", "TICKET", 500, 1, "Blue VIP Ticket — Curated high-confidence picks", "primary"),
+                ("🎫 Get Daily Ticket", "", "TICKET", 200, 1, "Daily Ticket — Today's top selections", "success"),
+                ("🥇 Golden Ticket", "", "TICKET", 1000, 3, "Golden VIP Ticket — Premium multi-match slip", "danger"),
+                ("🇲🇰 Get Macedonia Ticket", "", "TICKET", 1500, 1, "Macedonia Special Ticket — Exclusive fixture slip", "primary"),
+                ("🇪🇺 Euro Ticket", "", "TICKET", 800, 1, "European Leagues Ticket — Top Euro picks", "success"),
+            ]
+            for lbl, url, btype, price, days, desc, style in default_ticket_buttons:
+                db.execute(
+                    """
+                    INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active)
+                    VALUES(?,?,?,?,?,?,?,1)
+                    """,
+                    (lbl, url, btype, price, days, desc, style),
+                )
+            db.execute(
+                "INSERT INTO app_settings(key,value) VALUES('seeded_ticket_buttons','1') ON CONFLICT(key) DO UPDATE SET value='1'"
+            )
 
         db.execute(
             "INSERT INTO exchange_rates(currency,rate_from_kes,updated_at) VALUES('KES',1.0,?) ON CONFLICT(currency) DO NOTHING",
@@ -482,7 +533,6 @@ def register_user(user, referred_by=None):
         if existing:
             db.execute("UPDATE users SET username=?, first_name=? WHERE user_id=?", (username, first_name, user_id))
         else:
-            # Never auto-assign a country without explicit user confirmation
             db.execute(
                 """
                 INSERT INTO users(user_id,username,first_name,country,country_confirmed,currency,timezone_name,referred_by,created_at)
@@ -521,6 +571,69 @@ def has_active_vip(user_id):
     if sub["is_lifetime"]:
         return True
     return parse_utc(sub["expires_at"]) > utcnow()
+
+
+# --------------------------------------------------
+# CUSTOM BUTTONS / TICKET PRODUCTS HELPERS
+# --------------------------------------------------
+
+def get_all_custom_buttons(only_active=True):
+    with connect_db() as db:
+        if only_active:
+            return db.execute("SELECT * FROM custom_buttons WHERE is_active=1 ORDER BY id").fetchall()
+        return db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
+
+
+def get_custom_button(btn_id):
+    with connect_db() as db:
+        return db.execute("SELECT * FROM custom_buttons WHERE id=?", (int(btn_id),)).fetchone()
+
+
+def resolve_offer(plan_or_btn):
+    if isinstance(plan_or_btn, str) and plan_or_btn.startswith("btn:"):
+        raw_id = plan_or_btn.split(":", 1)[1]
+        if not raw_id.isdigit():
+            return None
+        b = get_custom_button(int(raw_id))
+        if not b or not b["is_active"] or b["button_type"] != "TICKET" or int(b["price"]) <= 0:
+            return None
+        return {
+            "kind": "button",
+            "key": plan_or_btn,
+            "btn_id": int(b["id"]),
+            "title": b["label"],
+            "price": int(b["price"]),
+            "days": int(b["days"]),
+            "is_lifetime": 0,
+            "description": b["description"] or "",
+        }
+    p = get_plan(plan_or_btn)
+    if not p:
+        return None
+    return {
+        "kind": "plan",
+        "key": p["name"],
+        "btn_id": None,
+        "title": p["title"] or f"{p['name'].title()} VIP",
+        "price": int(p["price"]),
+        "days": int(p["days"]),
+        "is_lifetime": int(p["is_lifetime"]),
+        "description": p["benefits"] or "",
+    }
+
+
+def format_order_item_name(plan_key):
+    if isinstance(plan_key, str) and plan_key.startswith("btn:"):
+        raw_id = plan_key.split(":", 1)[1]
+        if raw_id.isdigit():
+            b = get_custom_button(int(raw_id))
+            if b:
+                return b["label"]
+        return f"Ticket #{raw_id}"
+    p = get_plan(plan_key)
+    if p and p["title"]:
+        return p["title"]
+    return str(plan_key).title()
 
 
 # --------------------------------------------------
@@ -636,6 +749,14 @@ async def telegram(method, data):
     return result.get("result")
 
 
+async def ensure_bot_username():
+    global bot_username
+    if not bot_username:
+        me = await telegram("getMe", {})
+        bot_username = me["username"]
+    return bot_username
+
+
 async def telegram_send_document(chat_id, filename, content_bytes, caption=""):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
     client = await get_http()
@@ -683,6 +804,24 @@ async def send_message(chat_id, text, keyboard=None):
     return last_res
 
 
+async def edit_or_send(chat_id, message_id, text, keyboard=None):
+    if message_id:
+        try:
+            payload = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text[:4090],
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            }
+            if keyboard:
+                payload["reply_markup"] = keyboard
+            return await telegram("editMessageText", payload)
+        except Exception:
+            pass
+    return await send_message(chat_id, text, keyboard)
+
+
 async def answer_callback(callback_id, text=""):
     try:
         await telegram("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
@@ -691,11 +830,17 @@ async def answer_callback(callback_id, text=""):
 
 
 # --------------------------------------------------
-# KEYBOARDS (10-BUTTON MENU + GENUINE REACTIONS)
+# KEYBOARDS (10-BUTTON MENU + GENUINE REACTIONS + CHANNEL BUTTONS)
 # --------------------------------------------------
 
 def main_menu_keyboard(user_id=None):
     ch_url = get_setting("main_channel_url") or get_website_url()
+    portal_url = PUBLIC_URL.rstrip("/") + "/app"
+    portal_btn = (
+        {"text": "🌐 Open Empire Web Portal", "web_app": {"url": portal_url}, "style": "primary"}
+        if portal_url.startswith("https://")
+        else {"text": "🌐 Open Empire Web Portal", "url": portal_url, "style": "primary"}
+    )
     rows = [
         [
             {"text": "⚽ Today's Predictions", "callback_data": "menu:today", "style": "success"},
@@ -717,9 +862,7 @@ def main_menu_keyboard(user_id=None):
             {"text": "📢 Join Our Channel", "url": ch_url, "style": "primary"},
             {"text": "💬 Contact Admin", "callback_data": "menu:contact", "style": "success"},
         ],
-        [
-            {"text": "🌐 Open Empire Web Portal", "web_app": {"url": PUBLIC_URL.rstrip("/") + "/app"}, "style": "primary"},
-        ],
+        [portal_btn],
     ]
     if user_id and is_staff(user_id):
         rows.append([{"text": "⚡ ADMIN DASHBOARD", "callback_data": "admin:home", "style": "danger"}])
@@ -800,7 +943,40 @@ def get_reaction_counts(channel_msg_id):
     return counts
 
 
-def channel_post_keyboard(channel_msg_id=None, include_custom=False, include_reactions=True):
+def save_channel_post_meta(channel_msg_id, selected_btn_ids, include_reactions, include_footer):
+    with connect_db() as db:
+        db.execute(
+            """
+            INSERT INTO channel_posts(channel_msg_id,button_ids,include_reactions,include_footer,created_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(channel_msg_id) DO UPDATE SET
+                button_ids=excluded.button_ids,
+                include_reactions=excluded.include_reactions,
+                include_footer=excluded.include_footer
+            """,
+            (
+                int(channel_msg_id),
+                json.dumps([int(x) for x in (selected_btn_ids or [])]),
+                1 if include_reactions else 0,
+                1 if include_footer else 0,
+                utcnow().isoformat(),
+            ),
+        )
+
+
+def channel_post_keyboard(channel_msg_id=None, selected_btn_ids=None, include_footer=True, include_reactions=True):
+    # If updating an existing post (e.g. reaction tap), restore its exact saved buttons/settings
+    if channel_msg_id and selected_btn_ids is None:
+        with connect_db() as db:
+            meta = db.execute("SELECT * FROM channel_posts WHERE channel_msg_id=?", (int(channel_msg_id),)).fetchone()
+        if meta:
+            try:
+                selected_btn_ids = json.loads(meta["button_ids"])
+            except Exception:
+                selected_btn_ids = []
+            include_reactions = bool(meta["include_reactions"])
+            include_footer = bool(meta["include_footer"])
+
     contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
     join_url = f"https://t.me/{bot_username}?start=vip" if bot_username else contact_url
     website_url = get_website_url()
@@ -817,21 +993,38 @@ def channel_post_keyboard(channel_msg_id=None, include_custom=False, include_rea
             for idx, e in enumerate(REACTION_EMOJIS[3:])
         ])
 
-    rows.append([
-        {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "danger"},
-        {"text": "💬 Contact Admin", "url": contact_url, "style": "success"},
-    ])
-    if website_url:
-        short_domain = re.sub(r"^https?://", "", website_url).rstrip("/")
-        rows.append([{"text": f"🌐 {short_domain}", "url": website_url, "style": "primary"}])
-
-    if include_custom:
+    # Selected custom / ticket buttons for this channel post
+    if selected_btn_ids:
         with connect_db() as db:
-            buttons = db.execute("SELECT * FROM custom_buttons ORDER BY id").fetchall()
-        for b in buttons:
-            rows.append([{"text": b["label"], "url": b["url"], "style": "primary"}])
+            placeholders = ",".join(["?"] * len(selected_btn_ids))
+            btns = db.execute(
+                f"SELECT * FROM custom_buttons WHERE id IN ({placeholders}) AND is_active=1 ORDER BY id",
+                tuple(int(x) for x in selected_btn_ids),
+            ).fetchall()
+        btn_map = {int(b["id"]): b for b in btns}
+        for bid in selected_btn_ids:
+            b = btn_map.get(int(bid))
+            if not b:
+                continue
+            style = b["style"] if b["style"] in BUTTON_STYLES else "primary"
+            if b["button_type"] == "URL" and b["url"]:
+                target_url = b["url"]
+            elif bot_username:
+                target_url = f"https://t.me/{bot_username}?start=btn_{b['id']}"
+            else:
+                target_url = contact_url
+            rows.append([{"text": b["label"], "url": target_url, "style": style}])
 
-    return {"inline_keyboard": rows}
+    if include_footer:
+        rows.append([
+            {"text": "👑 JOIN VIP NOW", "url": join_url, "style": "danger"},
+            {"text": "💬 Contact Admin", "url": contact_url, "style": "success"},
+        ])
+        if website_url:
+            short_domain = re.sub(r"^https?://", "", website_url).rstrip("/")
+            rows.append([{"text": f"🌐 {short_domain}", "url": website_url, "style": "primary"}])
+
+    return {"inline_keyboard": rows} if rows else None
 
 
 def admin_keyboard(user_id):
@@ -846,10 +1039,13 @@ def admin_keyboard(user_id):
         ],
         [
             {"text": "👥 Users & VIPs", "callback_data": "admin:users", "style": "primary"},
-            {"text": "📝 Post to Channel", "callback_data": "admin:post_channel", "style": "success"},
+            {"text": "🎛️ Channel Buttons & Tickets", "callback_data": "admin:buttons", "style": "primary"},
         ],
         [
+            {"text": "📝 Post to Channel", "callback_data": "admin:post_channel", "style": "success"},
             {"text": "📢 VIP Promo Post", "callback_data": "admin:post", "style": "danger"},
+        ],
+        [
             {"text": "📣 Broadcast", "callback_data": "admin:broadcast", "style": "danger"},
         ],
     ]
@@ -907,11 +1103,11 @@ def recent_stk_cooldown_remaining(user_id):
 
 
 async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
-    plan = get_plan(plan_name)
-    if not plan:
+    offer = resolve_offer(plan_name)
+    if not offer:
         if notify_telegram:
-            await send_message(user_id, "⚠️ VIP plan unavailable.")
-        return {"ok": False, "error": "Plan unavailable"}
+            await send_message(user_id, "⚠️ Selected package/ticket is currently unavailable.")
+        return {"ok": False, "error": "Offer unavailable"}
 
     wait_sec = recent_stk_cooldown_remaining(user_id)
     if wait_sec > 0:
@@ -921,9 +1117,9 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
         return {"ok": False, "error": msg}
 
     external_ref = "PTE" + secrets.token_hex(7).upper()
-    amount = int(plan["price"])
+    amount = int(offer["price"])
     ph_channel = int(get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID))
-    plan_title = plan["title"] or f"{plan_name.title()} VIP"
+    item_title = offer["title"]
 
     with connect_db() as db:
         db.execute(
@@ -931,7 +1127,7 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
             INSERT INTO orders(external_ref,user_id,plan,amount,currency,local_amount,phone,provider,status,created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
-            (external_ref, user_id, plan_name, amount, "KES", f"KES {amount:,}", phone, "mpesa", "PENDING", utcnow().isoformat()),
+            (external_ref, user_id, offer["key"], amount, "KES", f"KES {amount:,}", phone, "mpesa", "PENDING", utcnow().isoformat()),
         )
 
     payload = {
@@ -968,11 +1164,11 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
             await send_message(
                 user_id,
                 "📲 <b>M-PESA STK PUSH SENT!</b>\n\n"
-                f"👑 Plan: <b>{html_escape(plan_title)}</b>\n"
+                f"🎫 Item: <b>{html_escape(item_title)}</b>\n"
                 f"💳 Transaction Amount: <b>KES {amount:,}</b>\n"
                 f"📞 Phone: <code>{html_escape(phone)}</code>\n"
                 f"🔗 Ref: <code>{external_ref}</code>\n\n"
-                "🔐 Enter your M-Pesa PIN. VIP activates automatically after verified callback.",
+                "🔐 Enter your M-Pesa PIN. Access activates automatically after verified callback.",
                 {
                     "inline_keyboard": [
                         [{"text": "🔄 Verify Payment Status", "callback_data": f"verify:{external_ref}", "style": "success"}],
@@ -990,9 +1186,9 @@ async def start_mpesa_payment(user_id, plan_name, phone, notify_telegram=True):
 
 
 async def submit_international_reference(user_id, plan_name, provider, text_input):
-    plan = get_plan(plan_name)
-    if not plan:
-        await send_message(user_id, "⚠️ VIP plan unavailable.")
+    offer = resolve_offer(plan_name)
+    if not offer:
+        await send_message(user_id, "⚠️ Selected package/ticket unavailable.")
         return
 
     parts = [p.strip() for p in text_input.split("|")]
@@ -1002,9 +1198,9 @@ async def submit_international_reference(user_id, plan_name, provider, text_inpu
 
     contact_val, txn_ref = parts[0][:50], parts[1][:60]
     prefs = get_user_prefs(user_id)
-    local_str, _ = format_converted_price(plan["price"], prefs["currency"])
+    local_str, _ = format_converted_price(offer["price"], prefs["currency"])
     external_ref = "INT" + secrets.token_hex(6).upper()
-    amount = int(plan["price"])
+    amount = int(offer["price"])
 
     with connect_db() as db:
         db.execute(
@@ -1012,15 +1208,16 @@ async def submit_international_reference(user_id, plan_name, provider, text_inpu
             INSERT INTO orders(external_ref,user_id,plan,amount,currency,local_amount,phone,provider,status,mpesa_receipt,created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (external_ref, user_id, plan_name, amount, prefs["currency"], local_str, contact_val, provider, "PENDING_REVIEW", txn_ref, utcnow().isoformat()),
+            (external_ref, user_id, offer["key"], amount, prefs["currency"], local_str, contact_val, provider, "PENDING_REVIEW", txn_ref, utcnow().isoformat()),
         )
 
     await send_message(
         user_id,
         "⏳ <b>PAYMENT SUBMITTED FOR VERIFICATION</b>\n\n"
+        f"🎫 Item: <b>{html_escape(offer['title'])}</b>\n"
         f"🔗 Order Ref: <code>{external_ref}</code>\n"
         f"🧾 Txn ID: <code>{html_escape(txn_ref)}</code>\n\n"
-        "🔒 Subscriptions are activated only after transaction verification (never from screenshots alone).",
+        "🔒 Access is activated only after transaction verification (never from screenshots alone).",
         {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
     )
 
@@ -1028,13 +1225,13 @@ async def submit_international_reference(user_id, plan_name, provider, text_inpu
         ADMIN_USER_ID,
         f"🔔 <b>PAYMENT REVIEW ({html_escape(provider.upper())})</b>\n\n"
         f"🆔 User: <code>{user_id}</code>\n"
-        f"👑 Plan: <b>{html_escape(plan['title'])}</b> — {html_escape(local_str)}\n"
+        f"🎫 Item: <b>{html_escape(offer['title'])}</b> — {html_escape(local_str)}\n"
         f"📞 Contact: <code>{html_escape(contact_val)}</code>\n"
         f"🧾 Txn ID: <code>{html_escape(txn_ref)}</code>\n"
         f"🔗 Ref: <code>{external_ref}</code>",
         {
             "inline_keyboard": [[
-                {"text": "✅ Verify & Activate VIP", "callback_data": f"admin:approve:{external_ref}", "style": "success"},
+                {"text": "✅ Verify & Activate", "callback_data": f"admin:approve:{external_ref}", "style": "success"},
                 {"text": "❌ Reject", "callback_data": f"admin:reject:{external_ref}", "style": "danger"},
             ]]
         },
@@ -1056,18 +1253,40 @@ async def verify_payhero_transaction(reference):
 # VIP ACCESS & ORDER FINALIZATION
 # --------------------------------------------------
 
-async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, is_lifetime_override=False):
+async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, is_lifetime_override=False, title_override=None):
     if days_override is not None:
         days = int(days_override)
-        display_title = f"{days}-Day VIP"
+        display_title = title_override or f"{days}-Day VIP"
         is_lifetime = 1 if is_lifetime_override else 0
     else:
-        plan = get_plan(plan_name)
-        if not plan:
+        offer = resolve_offer(plan_name)
+        if not offer:
             return
-        days = int(plan["days"])
-        display_title = plan["title"] or f"{plan_name.title()} VIP"
-        is_lifetime = int(plan["is_lifetime"])
+        days = int(offer["days"])
+        display_title = title_override or offer["title"]
+        is_lifetime = int(offer["is_lifetime"])
+
+    contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
+    receipt_line = f"🧾 Receipt: <code>{html_escape(receipt)}</code>\n" if receipt else ""
+
+    # Ticket-only item (0 VIP days): send confirmation & direct support link
+    if days <= 0 and not is_lifetime:
+        await send_message(
+            user_id,
+            f"🎉 <b>TICKET PAYMENT CONFIRMED!</b>\n\n"
+            f"👑 <b>{PROJECT_NAME} ({BRAND_TAG})</b>\n"
+            f"🎫 Ticket: <b>{html_escape(display_title)}</b>\n"
+            f"{receipt_line}\n"
+            f"✅ Your payment has been verified and Admin ({BRAND_TAG}) has been notified to deliver your ticket.\n"
+            "👇 Tap below if you want to message Admin directly:",
+            {
+                "inline_keyboard": [
+                    [{"text": f"💬 Contact {BRAND_TAG}", "url": contact_url, "style": "success"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}],
+                ]
+            },
+        )
+        return
 
     with connect_db() as db:
         existing = db.execute("SELECT * FROM subscriptions WHERE user_id=?", (user_id,)).fetchone()
@@ -1104,13 +1323,12 @@ async def give_vip_access(user_id, plan_name, days_override=None, receipt=None, 
             invite_payload["expire_date"] = int(expiry.timestamp())
         invite = await telegram("createChatInviteLink", invite_payload)
         exp_text = "Never (Lifetime)" if is_lifetime else format_local_time(expiry, prefs["tz"])
-        receipt_line = f"🧾 Receipt: <code>{html_escape(receipt)}</code>\n" if receipt else ""
 
         await send_message(
             user_id,
             f"🎉 <b>VIP MEMBERSHIP ACTIVATED!</b>\n\n"
             f"👑 <b>{PROJECT_NAME} ({BRAND_TAG})</b>\n"
-            f"💎 Plan: <b>{html_escape(display_title)}</b>\n"
+            f"💎 Item: <b>{html_escape(display_title)}</b>\n"
             f"{receipt_line}"
             f"📅 Expires: <b>{exp_text}</b>\n\n"
             "👇 Tap below to enter the VIP channel:",
@@ -1158,13 +1376,26 @@ async def finalize_paid_order(order, verified=None, callback_data=None, manual_a
     if updated == 0:
         return "ALREADY_PAID"
 
-    await give_vip_access(int(order["user_id"]), order["plan"], receipt=receipt)
+    offer = resolve_offer(order["plan"])
+    item_title = offer["title"] if offer else format_order_item_name(order["plan"])
+
+    if offer and offer["kind"] == "button":
+        await give_vip_access(
+            int(order["user_id"]),
+            order["plan"],
+            days_override=offer["days"],
+            receipt=receipt,
+            title_override=item_title,
+        )
+    else:
+        await give_vip_access(int(order["user_id"]), order["plan"], receipt=receipt, title_override=item_title)
+
     amt_display = order["local_amount"] or f"KES {order['amount']}"
     await send_message(
         ADMIN_USER_ID,
         f"✅ <b>{PROJECT_NAME} PAYMENT CONFIRMED</b>\n\n"
         f"🆔 User: <code>{order['user_id']}</code>\n"
-        f"💼 Plan: <b>{html_escape(order['plan'].title())}</b> — {html_escape(amt_display)}\n"
+        f"🎫 Item: <b>{html_escape(item_title)}</b> — {html_escape(amt_display)}\n"
         f"🧾 Receipt: <code>{html_escape(receipt or 'N/A')}</code>",
     )
     return "PAID"
@@ -1233,8 +1464,8 @@ async def sync_channel_message_for_match(match_id):
         log.warning("Could not sync channel msg %s: %s", msg_id, e)
 
 
-async def publish_match_batch(tier, match_ids=None):
-    global bot_username
+async def publish_match_batch(tier, match_ids=None, selected_btn_ids=None, include_footer=True, include_reactions=True):
+    await ensure_bot_username()
     with connect_db() as db:
         if match_ids:
             ph = ",".join(["?"] * len(match_ids))
@@ -1243,40 +1474,42 @@ async def publish_match_batch(tier, match_ids=None):
             rows = db.execute("SELECT * FROM matches WHERE tier=? AND publish_status='QUEUED' ORDER BY id", (tier,)).fetchall()
     if not rows:
         return None
-    if not bot_username:
-        bot_username = (await telegram("getMe", {}))["username"]
 
     target_chat = get_setting("vip_channel_id", VIP_CHANNEL_ID) if tier == "VIP" else get_setting("main_channel_id", CHANNEL_ID)
     full_text, _ = render_batch_text(tier, rows)
+    show_reacts = bool(include_reactions) and (tier == "FREE")
+    sel_btns = selected_btn_ids or []
+
     msg = await telegram("sendMessage", {
         "chat_id": target_chat,
         "parse_mode": "HTML",
         "text": full_text[:4090],
-        "reply_markup": channel_post_keyboard(include_reactions=False),
+        "reply_markup": channel_post_keyboard(selected_btn_ids=sel_btns, include_footer=include_footer, include_reactions=False),
         "disable_web_page_preview": True,
     })
     msg_id = msg["message_id"]
+    save_channel_post_meta(msg_id, sel_btns, show_reacts, include_footer)
+
     with connect_db() as db:
         for r in rows:
             db.execute("UPDATE matches SET publish_status='PUBLISHED', channel_msg_id=? WHERE id=?", (msg_id, r["id"]))
 
-    if tier == "FREE":
+    if show_reacts:
         try:
             await telegram("editMessageReplyMarkup", {
                 "chat_id": target_chat,
                 "message_id": msg_id,
-                "reply_markup": channel_post_keyboard(channel_msg_id=msg_id, include_reactions=True),
+                "reply_markup": channel_post_keyboard(channel_msg_id=msg_id),
             })
         except Exception:
             pass
     return msg
 
 
-async def publish_vip_post():
-    global bot_username
-    if not bot_username:
-        bot_username = (await telegram("getMe", {}))["username"]
+async def publish_vip_post(selected_btn_ids=None, include_footer=True, include_reactions=True):
+    await ensure_bot_username()
     main_chat = get_setting("main_channel_id", CHANNEL_ID)
+    sel_btns = selected_btn_ids or []
     msg = await telegram("sendMessage", {
         "chat_id": main_chat,
         "parse_mode": "HTML",
@@ -1285,57 +1518,60 @@ async def publish_vip_post():
             f"🎯 {html_escape(get_setting('vip_odds_info'))}\n\n"
             "⚡ Data-driven football analysis, VIP picks & accumulator tickets.\n"
             "🌍 Supports international currencies & verified payments.\n\n"
-            "👇 <b>TAP BELOW TO JOIN VIP OR CONTACT ADMIN</b>"
+            "👇 <b>TAP BELOW TO JOIN VIP OR GET A TICKET</b>"
         ),
-        "reply_markup": channel_post_keyboard(include_custom=True, include_reactions=False),
+        "reply_markup": channel_post_keyboard(selected_btn_ids=sel_btns, include_footer=include_footer, include_reactions=False),
     })
-    try:
-        await telegram("editMessageReplyMarkup", {
-            "chat_id": main_chat,
-            "message_id": msg["message_id"],
-            "reply_markup": channel_post_keyboard(channel_msg_id=msg["message_id"], include_custom=True, include_reactions=True),
-        })
-    except Exception:
-        pass
+    msg_id = msg["message_id"]
+    save_channel_post_meta(msg_id, sel_btns, include_reactions, include_footer)
+
+    if include_reactions:
+        try:
+            await telegram("editMessageReplyMarkup", {
+                "chat_id": main_chat,
+                "message_id": msg_id,
+                "reply_markup": channel_post_keyboard(channel_msg_id=msg_id),
+            })
+        except Exception:
+            pass
     return msg
 
 
-async def publish_custom_main_post(text_body="", photo_file_id=None):
-    global bot_username
-    if not bot_username:
-        bot_username = (await telegram("getMe", {}))["username"]
+async def publish_custom_main_post(text_body="", photo_file_id=None, selected_btn_ids=None, include_footer=True, include_reactions=True):
+    await ensure_bot_username()
     main_chat = get_setting("main_channel_id", CHANNEL_ID)
+    sel_btns = selected_btn_ids or []
     formatted = f"{html_escape(text_body)}\n\n🔥 <b>{PROJECT_NAME}</b> ({BRAND_TAG})" if text_body else f"🔥 <b>{PROJECT_NAME}</b> ({BRAND_TAG})"
 
+    kb = channel_post_keyboard(selected_btn_ids=sel_btns, include_footer=include_footer, include_reactions=False)
     if photo_file_id:
-        msg = await telegram("sendPhoto", {
-            "chat_id": main_chat,
-            "photo": photo_file_id,
-            "caption": formatted[:1020],
-            "parse_mode": "HTML",
-            "reply_markup": channel_post_keyboard(include_reactions=False),
-        })
+        payload = {"chat_id": main_chat, "photo": photo_file_id, "caption": formatted[:1020], "parse_mode": "HTML"}
+        if kb:
+            payload["reply_markup"] = kb
+        msg = await telegram("sendPhoto", payload)
     else:
-        msg = await telegram("sendMessage", {
-            "chat_id": main_chat,
-            "parse_mode": "HTML",
-            "text": formatted[:4090],
-            "reply_markup": channel_post_keyboard(include_reactions=False),
-            "disable_web_page_preview": True,
-        })
-    try:
-        await telegram("editMessageReplyMarkup", {
-            "chat_id": main_chat,
-            "message_id": msg["message_id"],
-            "reply_markup": channel_post_keyboard(channel_msg_id=msg["message_id"], include_reactions=True),
-        })
-    except Exception:
-        pass
+        payload = {"chat_id": main_chat, "parse_mode": "HTML", "text": formatted[:4090], "disable_web_page_preview": True}
+        if kb:
+            payload["reply_markup"] = kb
+        msg = await telegram("sendMessage", payload)
+
+    msg_id = msg["message_id"]
+    save_channel_post_meta(msg_id, sel_btns, include_reactions, include_footer)
+
+    if include_reactions:
+        try:
+            await telegram("editMessageReplyMarkup", {
+                "chat_id": main_chat,
+                "message_id": msg_id,
+                "reply_markup": channel_post_keyboard(channel_msg_id=msg_id),
+            })
+        except Exception:
+            pass
     return msg
 
 
 # --------------------------------------------------
-# USER VIEWS (WELCOME, COUNTRY, ACCUMULATOR, VIP, STATS)
+# USER VIEWS (WELCOME, COUNTRY, TICKET CHECKOUT, ACCUM, VIP, STATS)
 # --------------------------------------------------
 
 async def show_country_welcome(chat_id):
@@ -1360,6 +1596,64 @@ async def show_main_menu(chat_id, user_id):
         f"🎯 {html_escape(get_setting('vip_odds_info'))}\n\n"
         "⚽ <i>International Football Predictions & Analytics Platform</i>",
         main_menu_keyboard(user_id),
+    )
+
+
+async def show_ticket_button_checkout(chat_id, user_id, btn_id):
+    b = get_custom_button(btn_id)
+    if not b or not b["is_active"]:
+        await send_message(chat_id, "⚠️ This ticket/button is no longer active.", main_menu_keyboard(user_id))
+        return
+
+    contact_url = get_setting("admin_contact_url", f"https://t.me/{BRAND_TAG.lstrip('@')}")
+    prefs = get_user_prefs(user_id)
+    price = int(b["price"])
+    days = int(b["days"])
+    desc = (b["description"] or "").strip()
+
+    if b["button_type"] == "URL" and b["url"]:
+        await send_message(
+            chat_id,
+            f"🔗 <b>{html_escape(b['label'])}</b>\n\n{html_escape(desc) if desc else 'Tap below to open:'}",
+            {
+                "inline_keyboard": [
+                    [{"text": b["label"], "url": b["url"], "style": "primary"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "menu:home"}],
+                ]
+            },
+        )
+        return
+
+    price_line = f"KES {price:,}"
+    if price > 0 and prefs["currency"] != "KES":
+        conv, ok = format_converted_price(price, prefs["currency"])
+        if ok:
+            price_line = conv
+
+    days_line = f"⏳ Access Duration: <b>{days} Day{'s' if days != 1 else ''} VIP</b>\n" if days > 0 else "🎟️ Type: <b>Special Ticket Delivery</b>\n"
+    desc_line = f"📝 {html_escape(desc)}\n" if desc else ""
+
+    kb_rows = []
+    if price > 0:
+        kb_rows.append([{"text": f"🇰🇪 Pay KES {price:,} via M-Pesa (PayHero)", "callback_data": f"buybtn:{b['id']}:mpesa", "style": "success"}])
+        kb_rows.append([{"text": f"🌍 Other Countries: Contact {BRAND_TAG}", "url": contact_url, "style": "primary"}])
+        kb_rows.append([{"text": "🧾 Submit International Payment Ref", "callback_data": f"buybtn:{b['id']}:intl", "style": "primary"}])
+    else:
+        kb_rows.append([{"text": f"💬 Contact {BRAND_TAG} to Get Ticket", "url": contact_url, "style": "success"}])
+    kb_rows.append([{"text": "🏠 Main Menu", "callback_data": "menu:home"}])
+
+    await send_message(
+        chat_id,
+        f"🎫 <b>{html_escape(b['label'])}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Price: <b>{html_escape(price_line if price > 0 else 'Contact Admin')}</b>\n"
+        f"{days_line}{desc_line}\n"
+        f"💳 <b>HOW TO PAY:</b>\n"
+        f"🇰🇪 <b>For Kenyans (Instant M-Pesa PayHero):</b>\n"
+        f"Tap <b>\"Pay via M-Pesa (PayHero)\"</b> below, enter your Safaricom number (07/01), and enter your M-Pesa PIN. Verified automatically!\n\n"
+        f"🌍 <b>For Other Countries (UG, TZ, NG, GH, ZA, UK, US, EU, etc.):</b>\n"
+        f"Contact Admin <b>{BRAND_TAG}</b> directly for Mobile Money, Bank Transfer, PayPal, or USDT payment instructions.",
+        {"inline_keyboard": kb_rows},
     )
 
 
@@ -1453,7 +1747,6 @@ async def show_vip_screen(chat_id, user_id):
 
 
 async def show_stats_and_results(chat_id, user_id, only_settled=False):
-    prefs = get_user_prefs(user_id)
     with connect_db() as db:
         total = db.execute("SELECT COUNT(*) AS n FROM matches").fetchone()["n"]
         won = db.execute("SELECT COUNT(*) AS n FROM matches WHERE result='WON'").fetchone()["n"]
@@ -1476,6 +1769,144 @@ async def show_stats_and_results(chat_id, user_id, only_settled=False):
         f"━━━━━━━━━━━━━━━━━━━━\n\n{body}",
         {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "menu:home", "style": "primary"}]]},
     )
+
+
+# --------------------------------------------------
+# ADMIN BUTTONS MANAGER & CHANNEL POST BUTTON PICKER
+# --------------------------------------------------
+
+async def show_admin_buttons(chat_id, message_id=None):
+    buttons = get_all_custom_buttons(only_active=False)
+    lines = []
+    rows = []
+    for b in buttons:
+        status_dot = "🟢" if b["is_active"] else "⚫"
+        if b["button_type"] == "URL":
+            info = f"🔗 Link"
+        else:
+            info = f"💰 KES {int(b['price']):,} · {int(b['days'])}d"
+        lines.append(f"{status_dot} <b>{html_escape(b['label'])}</b> — {info}")
+        rows.append([{"text": f"⚙️ {b['label']} ({info})", "callback_data": f"admin:btn_view:{b['id']}", "style": b["style"] if b["style"] in BUTTON_STYLES else "primary"}])
+
+    rows.append([
+        {"text": "➕ Add Ticket Button", "callback_data": "admin:btn_add_ticket", "style": "success"},
+        {"text": "🔗 Add Link Button", "callback_data": "admin:btn_add_url", "style": "primary"},
+    ])
+    rows.append([{"text": "⬅️ Back to Admin", "callback_data": "admin:home"}])
+
+    text = (
+        "🎛️ <b>CHANNEL BUTTONS & TICKETS MANAGER</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Create, edit, price, or remove buttons. When posting to the main channel, you can pick which of these buttons appear on each post!\n\n"
+        + ("\n".join(lines) if lines else "<i>No buttons configured yet.</i>")
+    )
+    await edit_or_send(chat_id, message_id, text, {"inline_keyboard": rows})
+
+
+async def show_admin_button_detail(chat_id, btn_id, message_id=None):
+    b = get_custom_button(btn_id)
+    if not b:
+        await show_admin_buttons(chat_id, message_id)
+        return
+
+    style_name = {"primary": "🔵 Blue (primary)", "success": "🟢 Green (success)", "danger": "🔴 Red (danger)"}.get(b["style"], b["style"])
+    if b["button_type"] == "URL":
+        detail_text = (
+            f"🔗 <b>LINK BUTTON #{b['id']}</b>\n"
+            f"Label: <b>{html_escape(b['label'])}</b>\n"
+            f"URL: <code>{html_escape(b['url'])}</code>\n"
+            f"Color: {style_name}\n"
+            f"Status: {'🟢 Active' if b['is_active'] else '⚫ Hidden'}"
+        )
+        rows = [
+            [{"text": "✏️ Rename Label", "callback_data": f"admin:btn_rename:{b['id']}", "style": "primary"}],
+            [{"text": f"🎨 Color: {b['style'].title()}", "callback_data": f"admin:btn_style:{b['id']}", "style": b["style"] if b["style"] in BUTTON_STYLES else "primary"}],
+            [{"text": "🗑️ Remove Button", "callback_data": f"admin:btn_del:{b['id']}", "style": "danger"}],
+            [{"text": "⬅️ All Buttons", "callback_data": "admin:buttons"}],
+        ]
+    else:
+        days_str = f"{b['days']} day(s) VIP access" if int(b["days"]) > 0 else "0 (Ticket delivery / manual)"
+        detail_text = (
+            f"🎫 <b>TICKET BUTTON #{b['id']}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Label: <b>{html_escape(b['label'])}</b>\n"
+            f"Payment (KE PayHero): <b>KES {int(b['price']):,}</b>\n"
+            f"Other Countries: <b>Contact {BRAND_TAG}</b>\n"
+            f"VIP Days on Pay: <b>{days_str}</b>\n"
+            f"Color: {style_name}\n"
+            f"Description: <i>{html_escape(b['description'] or 'None')}</i>"
+        )
+        rows = [
+            [
+                {"text": f"💰 Set Price (KES {int(b['price']):,})", "callback_data": f"admin:btn_setprice:{b['id']}", "style": "success"},
+                {"text": f"📅 VIP Days ({b['days']}d)", "callback_data": f"admin:btn_setdays:{b['id']}", "style": "primary"},
+            ],
+            [
+                {"text": "✏️ Rename Label", "callback_data": f"admin:btn_rename:{b['id']}", "style": "primary"},
+                {"text": "📝 Edit Description", "callback_data": f"admin:btn_setdesc:{b['id']}", "style": "primary"},
+            ],
+            [
+                {"text": f"🎨 Color: {b['style'].title()}", "callback_data": f"admin:btn_style:{b['id']}", "style": b["style"] if b["style"] in BUTTON_STYLES else "primary"},
+                {"text": "🗑️ Remove Button", "callback_data": f"admin:btn_del:{b['id']}", "style": "danger"},
+            ],
+            [{"text": "⬅️ All Buttons", "callback_data": "admin:buttons"}],
+        ]
+    await edit_or_send(chat_id, message_id, detail_text, {"inline_keyboard": rows})
+
+
+async def show_post_button_picker(chat_id, user_id, picker, message_id=None):
+    set_session(user_id, "POST_PICKER", json.dumps(picker))
+    buttons = get_all_custom_buttons(only_active=True)
+    selected = set(int(x) for x in picker.get("btn_ids", []))
+
+    mode = picker.get("mode", "custom")
+    mode_titles = {
+        "custom": "📝 POST TO MAIN CHANNEL",
+        "vip_promo": "📢 VIP PROMO POST",
+        "free_matches": "⚽ POST QUEUED FREE MATCHES",
+    }
+    action_labels = {
+        "custom": "➡️ Next: Write Post Text / Send Photo",
+        "vip_promo": "🚀 Publish VIP Promo Now",
+        "free_matches": "🚀 Publish FREE Matches Now",
+    }
+
+    rows = []
+    for b in buttons:
+        is_on = int(b["id"]) in selected
+        price_tag = f" (KES {int(b['price']):,})" if (b["button_type"] == "TICKET" and int(b["price"]) > 0) else ""
+        rows.append([{
+            "text": f"{'✅' if is_on else '⬜'} {b['label']}{price_tag}",
+            "callback_data": f"postpick:toggle:{b['id']}",
+            "style": "success" if is_on else "primary",
+        }])
+
+    rows.append([
+        {"text": "✅ Select All", "callback_data": "postpick:all", "style": "success"},
+        {"text": "⬜ Clear All", "callback_data": "postpick:none", "style": "primary"},
+    ])
+    rows.append([
+        {"text": f"👑 VIP/Contact Footer: {'ON' if picker.get('footer', True) else 'OFF'}", "callback_data": "postpick:footer"},
+        {"text": f"🔥 Reactions: {'ON' if picker.get('react', True) else 'OFF'}", "callback_data": "postpick:react"},
+    ])
+    rows.append([
+        {"text": action_labels.get(mode, "➡️ Next"), "callback_data": "postpick:next", "style": "success"},
+    ])
+    rows.append([
+        {"text": "🎛️ Manage/Add Buttons", "callback_data": "admin:buttons", "style": "primary"},
+        {"text": "❌ Cancel", "callback_data": "admin:home", "style": "danger"},
+    ])
+
+    selected_names = [b["label"] for b in buttons if int(b["id"]) in selected]
+    summary = ", ".join(html_escape(n) for n in selected_names) if selected_names else "<i>None selected</i>"
+
+    text = (
+        f"<b>{mode_titles.get(mode, '📝 CHANNEL POST')} — CHOOSE BUTTONS</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Tap any button below to toggle it ON (✅) or OFF (⬜) for this post.\n\n"
+        f"<b>Selected Buttons ({len(selected_names)}):</b>\n{summary}"
+    )
+    await edit_or_send(chat_id, message_id, text, {"inline_keyboard": rows})
 
 
 # --------------------------------------------------
@@ -1513,7 +1944,6 @@ async def handle_message(message):
             lat = message["location"]["latitude"]
             lon = message["location"]["longitude"]
             detected_code = await reverse_geocode_country(lat, lon)
-            # Remove reply keyboard cleanly
             await send_message(chat_id, "🔍 Checking location...", {"remove_keyboard": True})
             if detected_code and detected_code in COUNTRIES:
                 c = COUNTRIES[detected_code]
@@ -1541,8 +1971,11 @@ async def handle_message(message):
         if cmd == "/start":
             clear_session(user_id)
             prefs = get_user_prefs(user_id)
-            if " vip" in text.lower():
+            arg = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+            if arg.lower() == "vip":
                 await show_vip_screen(chat_id, user_id)
+            elif arg.startswith("btn_") and arg[4:].isdigit():
+                await show_ticket_button_checkout(chat_id, user_id, int(arg[4:]))
             elif not prefs["confirmed"]:
                 await show_country_welcome(chat_id)
             else:
@@ -1697,9 +2130,123 @@ async def handle_message(message):
 
         if state == "WAIT_CHANNEL_POST" and is_staff(user_id):
             clear_session(user_id)
-            await publish_custom_main_post(text, photo_file_id=photo_file_id)
+            try:
+                picker = json.loads(payload)
+            except Exception:
+                picker = {"btn_ids": [], "footer": True, "react": True}
+            await publish_custom_main_post(
+                text,
+                photo_file_id=photo_file_id,
+                selected_btn_ids=picker.get("btn_ids", []),
+                include_footer=picker.get("footer", True),
+                include_reactions=picker.get("react", True),
+            )
             log_audit(user_id, "CHANNEL_POST", text[:80])
-            await send_message(chat_id, "✅ Published to channel with genuine reaction buttons!", admin_keyboard(user_id))
+            await send_message(chat_id, "✅ Published to Main Channel with your selected buttons!", admin_keyboard(user_id))
+            return
+
+        if state == "WAIT_BTN_ADD_TICKET" and is_staff(user_id):
+            parts = [p.strip() for p in text.split("|")]
+            if len(parts) >= 2 and parts[0]:
+                label = parts[0][:64]
+                if not parts[1].isdigit():
+                    await send_message(chat_id, "⚠️ Price must be a whole number in KES. Example:\n<code>💎 Diamond Ticket | 1500 | 7</code>")
+                    return
+                price = int(parts[1])
+                days = int(parts[2]) if (len(parts) >= 3 and parts[2].isdigit()) else 1
+                clear_session(user_id)
+                with connect_db() as db:
+                    new_id = insert_returning_id(
+                        db,
+                        "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                        (label, "", "TICKET", price, days, "", "primary"),
+                    )
+                log_audit(user_id, "ADD_BTN_TICKET", f"{label} KES {price}")
+                await send_message(chat_id, f"✅ Added ticket button <b>{html_escape(label)}</b>!")
+                await show_admin_button_detail(chat_id, new_id)
+            elif text:
+                set_session(user_id, "WAIT_BTN_ADD_PRICE", text[:64])
+                await send_message(chat_id, f"💰 Enter the <b>KES price</b> for <b>{html_escape(text[:64])}</b> (e.g. <code>500</code>, or <code>0</code> for Contact Admin only):")
+            return
+
+        if state == "WAIT_BTN_ADD_PRICE" and is_staff(user_id):
+            if not text.isdigit():
+                await send_message(chat_id, "⚠️ Enter a valid whole number KES price (e.g. <code>500</code>) or /cancel.")
+                return
+            price = int(text)
+            label = payload[:64]
+            clear_session(user_id)
+            with connect_db() as db:
+                new_id = insert_returning_id(
+                    db,
+                    "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                    (label, "", "TICKET", price, 1, "", "primary"),
+                )
+            log_audit(user_id, "ADD_BTN_TICKET", f"{label} KES {price}")
+            await send_message(chat_id, f"✅ Created <b>{html_escape(label)}</b> — KES {price:,}!")
+            await show_admin_button_detail(chat_id, new_id)
+            return
+
+        if state == "WAIT_BTN_ADD_URL" and is_staff(user_id):
+            parts = [p.strip() for p in text.split("|", 1)]
+            if len(parts) != 2 or not parts[0] or not parts[1].startswith(("http://", "https://")):
+                await send_message(chat_id, "⚠️ Format: <code>Button Label | https://example.com</code>")
+                return
+            clear_session(user_id)
+            with connect_db() as db:
+                new_id = insert_returning_id(
+                    db,
+                    "INSERT INTO custom_buttons(label,url,button_type,price,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                    (parts[0][:64], parts[1][:300], "URL", 0, 0, "", "primary"),
+                )
+            log_audit(user_id, "ADD_BTN_URL", parts[0][:64])
+            await send_message(chat_id, f"✅ Added link button <b>{html_escape(parts[0][:64])}</b>!")
+            await show_admin_button_detail(chat_id, new_id)
+            return
+
+        if state == "WAIT_BTN_SETPRICE" and is_staff(user_id):
+            if not text.isdigit():
+                await send_message(chat_id, "⚠️ Enter a whole number KES price (e.g. <code>500</code>) or /cancel.")
+                return
+            btn_id = int(payload)
+            clear_session(user_id)
+            with connect_db() as db:
+                db.execute("UPDATE custom_buttons SET price=? WHERE id=?", (int(text), btn_id))
+            log_audit(user_id, "EDIT_BTN_PRICE", f"btn:{btn_id}={text}")
+            await show_admin_button_detail(chat_id, btn_id)
+            return
+
+        if state == "WAIT_BTN_SETDAYS" and is_staff(user_id):
+            if not text.isdigit():
+                await send_message(chat_id, "⚠️ Enter a whole number of days (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for manual ticket delivery).")
+                return
+            btn_id = int(payload)
+            clear_session(user_id)
+            with connect_db() as db:
+                db.execute("UPDATE custom_buttons SET days=? WHERE id=?", (int(text), btn_id))
+            log_audit(user_id, "EDIT_BTN_DAYS", f"btn:{btn_id}={text}d")
+            await show_admin_button_detail(chat_id, btn_id)
+            return
+
+        if state == "WAIT_BTN_RENAME" and is_staff(user_id):
+            if not text:
+                await send_message(chat_id, "⚠️ Send a valid button label or /cancel.")
+                return
+            btn_id = int(payload)
+            clear_session(user_id)
+            with connect_db() as db:
+                db.execute("UPDATE custom_buttons SET label=? WHERE id=?", (text[:64], btn_id))
+            log_audit(user_id, "RENAME_BTN", f"btn:{btn_id}={text[:64]}")
+            await show_admin_button_detail(chat_id, btn_id)
+            return
+
+        if state == "WAIT_BTN_SETDESC" and is_staff(user_id):
+            btn_id = int(payload)
+            clear_session(user_id)
+            with connect_db() as db:
+                db.execute("UPDATE custom_buttons SET description=? WHERE id=?", (text[:300], btn_id))
+            log_audit(user_id, "DESC_BTN", f"btn:{btn_id}")
+            await show_admin_button_detail(chat_id, btn_id)
             return
 
         if state == "WAIT_BROADCAST" and is_staff(user_id):
@@ -1734,7 +2281,7 @@ async def handle_message(message):
 
 
 # --------------------------------------------------
-# CALLBACK HANDLER (MENU, REACTIONS, COUNTRY, ACCUM, ADMIN)
+# CALLBACK HANDLER (MENU, REACTIONS, COUNTRY, BUTTONS, ADMIN)
 # --------------------------------------------------
 
 async def handle_callback(query):
@@ -1744,12 +2291,13 @@ async def handle_callback(query):
     data = query.get("data", "")
     msg_obj = query.get("message") or {}
     chat_id = msg_obj.get("chat", {}).get("id") or user_id
+    message_id = msg_obj.get("message_id")
 
     # Genuine channel post reaction button tap
     if data.startswith("react:"):
         idx = int(data.split(":", 1)[1])
-        if 0 <= idx < len(REACTION_EMOJIS) and msg_obj.get("message_id"):
-            c_msg_id = msg_obj["message_id"]
+        if 0 <= idx < len(REACTION_EMOJIS) and message_id:
+            c_msg_id = message_id
             emoji = REACTION_EMOJIS[idx]
             with connect_db() as db:
                 exists = db.execute(
@@ -1764,10 +2312,11 @@ async def handle_callback(query):
                     feedback = f"Reacted {emoji}"
             await answer_callback(cid, feedback)
             try:
+                await ensure_bot_username()
                 await telegram("editMessageReplyMarkup", {
                     "chat_id": msg_obj["chat"]["id"],
                     "message_id": c_msg_id,
-                    "reply_markup": channel_post_keyboard(channel_msg_id=c_msg_id, include_reactions=True),
+                    "reply_markup": channel_post_keyboard(channel_msg_id=c_msg_id),
                 })
             except Exception:
                 pass
@@ -1881,7 +2430,7 @@ async def handle_callback(query):
             sub = db.execute("SELECT * FROM subscriptions WHERE user_id=?", (user_id,)).fetchone()
             orders = db.execute("SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 6", (user_id,)).fetchall()
         sub_txt = f"✅ Active ({sub['plan'].title()}) — Expires: {'Lifetime' if sub['is_lifetime'] else format_local_time(sub['expires_at'], prefs['tz'])}" if (sub and sub["status"] == "ACTIVE") else "❌ Inactive"
-        ord_txt = "\n".join(f"• {o['plan'].title()} — {o['local_amount'] or o['amount']} [{o['status']}]" for o in orders) or "No orders yet."
+        ord_txt = "\n".join(f"• {html_escape(format_order_item_name(o['plan']))} — {o['local_amount'] or o['amount']} [{o['status']}]" for o in orders) or "No orders yet."
         await send_message(chat_id, f"💳 <b>MY SUBSCRIPTION</b>\n\nStatus: <b>{sub_txt}</b>\n\n<b>Recent Payments:</b>\n{ord_txt}", {"inline_keyboard": [[{"text": "👑 VIP Membership", "callback_data": "menu:vip", "style": "danger"}], [{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]})
         return
 
@@ -1990,6 +2539,33 @@ async def handle_callback(query):
             await send_message(chat_id, f"💳 Contact {BRAND_TAG} for {provider.upper()} details, then reply with:\n<code>YourPhoneOrEmail | TransactionID</code>")
         return
 
+    if data.startswith("buybtn:"):
+        _, raw_id, method = data.split(":", 2)
+        if not raw_id.isdigit():
+            await answer_callback(cid, "Invalid ticket")
+            return
+        b = get_custom_button(int(raw_id))
+        if not b or not b["is_active"]:
+            await answer_callback(cid, "Unavailable")
+            return
+        await answer_callback(cid)
+        if method == "mpesa":
+            set_session(user_id, "WAIT_MPESA_PHONE", f"btn:{b['id']}")
+            await send_message(
+                chat_id,
+                f"📲 <b>Pay KES {int(b['price']):,} for {html_escape(b['label'])}</b>\n\n"
+                "Enter your Kenyan Safaricom number (e.g. <code>0712345678</code>) or /cancel:",
+            )
+        else:
+            set_session(user_id, "WAIT_INTL_TICKET", f"btn:{b['id']}")
+            await send_message(
+                chat_id,
+                f"🌍 <b>International Payment — {html_escape(b['label'])}</b>\n\n"
+                f"1️⃣ Contact Admin <b>{BRAND_TAG}</b> to get payment details for your country.\n"
+                f"2️⃣ After sending payment, reply here with:\n<code>YourPhoneOrEmail | TransactionID</code>\n\n(Or send /cancel)",
+            )
+        return
+
     if data.startswith("verify:"):
         ext_ref = data.split(":", 1)[1]
         with connect_db() as db:
@@ -2004,27 +2580,113 @@ async def handle_callback(query):
             await send_message(user_id, "⏳ Still pending on M-Pesa. Tap Verify again shortly.")
         return
 
+    # ---- POST BUTTON PICKER CALLBACKS ----
+    if data.startswith("postpick:"):
+        if not is_staff(user_id):
+            await answer_callback(cid, "Unauthorized")
+            return
+        parts = data.split(":")
+        sub = parts[1]
+        sess = get_session(user_id)
+        picker = {"mode": "custom", "btn_ids": [], "footer": True, "react": True}
+        if sess and sess["state"] == "POST_PICKER":
+            try:
+                picker = json.loads(sess["payload"])
+            except Exception:
+                pass
+
+        if sub == "toggle" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            if bid in picker["btn_ids"]:
+                picker["btn_ids"].remove(bid)
+            else:
+                picker["btn_ids"].append(bid)
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, picker, message_id=message_id)
+        elif sub == "all":
+            picker["btn_ids"] = [int(b["id"]) for b in get_all_custom_buttons(only_active=True)]
+            await answer_callback(cid, "All selected")
+            await show_post_button_picker(chat_id, user_id, picker, message_id=message_id)
+        elif sub == "none":
+            picker["btn_ids"] = []
+            await answer_callback(cid, "Cleared")
+            await show_post_button_picker(chat_id, user_id, picker, message_id=message_id)
+        elif sub == "footer":
+            picker["footer"] = not picker.get("footer", True)
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, picker, message_id=message_id)
+        elif sub == "react":
+            picker["react"] = not picker.get("react", True)
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, picker, message_id=message_id)
+        elif sub == "next":
+            mode = picker.get("mode", "custom")
+            if mode == "custom":
+                await answer_callback(cid)
+                set_session(user_id, "WAIT_CHANNEL_POST", json.dumps(picker))
+                await send_message(
+                    chat_id,
+                    f"📝 <b>STEP 2: SEND POST CONTENT</b>\n\n"
+                    f"Selected buttons: <b>{len(picker.get('btn_ids', []))}</b>\n"
+                    "Now send the text message or photo+caption to publish to the Main Channel (or /cancel):",
+                )
+            elif mode == "vip_promo":
+                clear_session(user_id)
+                await answer_callback(cid, "Publishing...")
+                await publish_vip_post(
+                    selected_btn_ids=picker.get("btn_ids", []),
+                    include_footer=picker.get("footer", True),
+                    include_reactions=picker.get("react", True),
+                )
+                log_audit(user_id, "VIP_PROMO_POST", f"btns={picker.get('btn_ids', [])}")
+                await send_message(chat_id, "✅ VIP Promo published to Main Channel!", admin_keyboard(user_id))
+            elif mode == "free_matches":
+                clear_session(user_id)
+                await answer_callback(cid, "Publishing...")
+                res = await publish_match_batch(
+                    "FREE",
+                    selected_btn_ids=picker.get("btn_ids", []),
+                    include_footer=picker.get("footer", True),
+                    include_reactions=picker.get("react", True),
+                )
+                if res:
+                    log_audit(user_id, "PUB_FREE_MATCHES", f"btns={picker.get('btn_ids', [])}")
+                    await send_message(chat_id, "✅ Published queued FREE matches to Main Channel!", admin_keyboard(user_id))
+                else:
+                    await send_message(chat_id, "ℹ️ No queued FREE matches found.", admin_keyboard(user_id))
+        return
+
     if data.startswith("admin:"):
         if not is_staff(user_id):
             await answer_callback(cid, "Unauthorized")
             return
         parts = data.split(":")
         action = parts[1]
-        await answer_callback(cid)
 
         if action == "home":
+            clear_session(user_id)
+            await answer_callback(cid)
             await send_message(chat_id, f"⚡ <b>{PROJECT_NAME} ADMIN</b>", admin_keyboard(user_id))
         elif action == "stats":
+            await answer_callback(cid)
             await show_admin_stats(chat_id, user_id)
         elif action == "matches":
+            await answer_callback(cid)
             await show_admin_matches(chat_id, user_id)
         elif action == "pub_free":
-            await publish_match_batch("FREE")
-            await send_message(chat_id, "✅ Published queued FREE matches!", admin_keyboard(user_id))
+            with connect_db() as db:
+                qf = db.execute("SELECT COUNT(*) AS n FROM matches WHERE tier='FREE' AND publish_status='QUEUED'").fetchone()["n"]
+            if qf == 0:
+                await answer_callback(cid, "No queued FREE matches")
+                return
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, {"mode": "free_matches", "btn_ids": [], "footer": True, "react": True})
         elif action == "pub_vip":
-            await publish_match_batch("VIP")
-            await send_message(chat_id, "✅ Published queued VIP matches!", admin_keyboard(user_id))
+            await answer_callback(cid)
+            res = await publish_match_batch("VIP", selected_btn_ids=[], include_footer=True, include_reactions=False)
+            await send_message(chat_id, "✅ Published queued VIP matches!" if res else "ℹ️ No queued VIP matches.", admin_keyboard(user_id))
         elif action == "res" and len(parts) == 4:
+            await answer_callback(cid)
             mid, new_res = int(parts[2]), parts[3]
             with connect_db() as db:
                 db.execute("UPDATE matches SET result=? WHERE id=?", (new_res, mid))
@@ -2032,13 +2694,16 @@ async def handle_callback(query):
             await sync_channel_message_for_match(mid)
             await show_admin_matches(chat_id, user_id)
         elif action == "accums":
+            await answer_callback(cid)
             with connect_db() as db:
                 accums = db.execute("SELECT * FROM accumulators ORDER BY id DESC LIMIT 8").fetchall()
             txt = "🎯 <b>ACCUMULATOR TICKETS</b>\n\n" + ("\n".join(f"• #{a['id']} [{a['category']}] {a['total_odds']}x — {a['status']}" for a in accums) or "No tickets yet.")
             await send_message(chat_id, txt, admin_keyboard(user_id))
         elif action == "transactions":
+            await answer_callback(cid)
             await show_admin_transactions(chat_id, user_id)
         elif action == "approve" and len(parts) == 3 and is_super_admin(user_id):
+            await answer_callback(cid)
             with connect_db() as db:
                 order = db.execute("SELECT * FROM orders WHERE external_ref=?", (parts[2],)).fetchone()
             if order:
@@ -2046,42 +2711,131 @@ async def handle_callback(query):
                 log_audit(user_id, "APPROVE_ORDER", parts[2])
                 await send_message(chat_id, f"✅ Approved {parts[2]}.")
         elif action == "reject" and len(parts) == 3 and is_super_admin(user_id):
+            await answer_callback(cid)
             with connect_db() as db:
                 db.execute("UPDATE orders SET status='FAILED' WHERE external_ref=?", (parts[2],))
             log_audit(user_id, "REJECT_ORDER", parts[2])
             await send_message(chat_id, f"🚫 Rejected {parts[2]}.")
         elif action == "users":
+            await answer_callback(cid)
             await show_admin_users(chat_id, user_id)
+        elif action == "buttons":
+            await answer_callback(cid)
+            await show_admin_buttons(chat_id, message_id=message_id)
+        elif action == "btn_view" and len(parts) == 3 and parts[2].isdigit():
+            await answer_callback(cid)
+            await show_admin_button_detail(chat_id, int(parts[2]), message_id=message_id)
+        elif action == "btn_add_ticket":
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_ADD_TICKET")
+            await send_message(
+                chat_id,
+                "➕ <b>ADD TICKET PAYMENT BUTTON</b>\n\n"
+                "Send the button details in this format:\n"
+                "<code>Button Name | Price in KES | VIP Days</code>\n\n"
+                "Examples:\n"
+                "<code>🔵 Get Blue Ticket | 500 | 1</code>\n"
+                "<code>💎 Diamond Ticket | 2000 | 0</code> <i>(0 days = ticket delivery without auto VIP channel link)</i>\n\n"
+                "Or just send the <b>Button Name</b> and I will ask for the price next (or /cancel):",
+            )
+        elif action == "btn_add_url":
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_ADD_URL")
+            await send_message(
+                chat_id,
+                "🔗 <b>ADD LINK BUTTON (URL)</b>\n\n"
+                "Send in this format:\n<code>Button Label | https://example.com</code>\n\n(or /cancel)",
+            )
+        elif action == "btn_setprice" and len(parts) == 3 and parts[2].isdigit():
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_SETPRICE", parts[2])
+            await send_message(chat_id, "💰 Enter the new <b>KES price</b> (e.g. <code>500</code>, or <code>0</code> for Contact Admin only):")
+        elif action == "btn_setdays" and len(parts) == 3 and parts[2].isdigit():
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_SETDAYS", parts[2])
+            await send_message(chat_id, "📅 Enter <b>VIP access days</b> granted after payment (e.g. <code>1</code>, <code>7</code>, or <code>0</code> for ticket-only confirmation):")
+        elif action == "btn_rename" and len(parts) == 3 and parts[2].isdigit():
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_RENAME", parts[2])
+            await send_message(chat_id, "✏️ Send the new button label (e.g. <code>🔵 Get Blue Ticket</code>):")
+        elif action == "btn_setdesc" and len(parts) == 3 and parts[2].isdigit():
+            await answer_callback(cid)
+            set_session(user_id, "WAIT_BTN_SETDESC", parts[2])
+            await send_message(chat_id, "📝 Send the description shown when users tap this ticket button:")
+        elif action == "btn_style" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            b = get_custom_button(bid)
+            if b:
+                cur_style = b["style"] if b["style"] in BUTTON_STYLES else "primary"
+                next_style = BUTTON_STYLES[(BUTTON_STYLES.index(cur_style) + 1) % len(BUTTON_STYLES)]
+                with connect_db() as db:
+                    db.execute("UPDATE custom_buttons SET style=? WHERE id=?", (next_style, bid))
+                await answer_callback(cid, f"Color: {next_style}")
+                await show_admin_button_detail(chat_id, bid, message_id=message_id)
+            else:
+                await answer_callback(cid)
+        elif action == "btn_del" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            b = get_custom_button(bid)
+            await answer_callback(cid)
+            if b:
+                await edit_or_send(
+                    chat_id,
+                    message_id,
+                    f"🗑️ Are you sure you want to remove <b>{html_escape(b['label'])}</b>?",
+                    {
+                        "inline_keyboard": [[
+                            {"text": "✅ Yes, Remove", "callback_data": f"admin:btn_del_yes:{bid}", "style": "danger"},
+                            {"text": "❌ Cancel", "callback_data": f"admin:btn_view:{bid}", "style": "primary"},
+                        ]]
+                    },
+                )
+        elif action == "btn_del_yes" and len(parts) == 3 and parts[2].isdigit():
+            bid = int(parts[2])
+            with connect_db() as db:
+                db.execute("DELETE FROM custom_buttons WHERE id=?", (bid,))
+            log_audit(user_id, "DELETE_BTN", str(bid))
+            await answer_callback(cid, "Button removed")
+            await show_admin_buttons(chat_id, message_id=message_id)
         elif action == "post_channel":
-            set_session(user_id, "WAIT_CHANNEL_POST")
-            await send_message(chat_id, "📝 Send text or photo+caption to publish to the Main Channel:")
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, {"mode": "custom", "btn_ids": [], "footer": True, "react": True})
         elif action == "post":
-            await publish_vip_post()
-            await send_message(chat_id, "✅ VIP Promo published.", admin_keyboard(user_id))
+            await answer_callback(cid)
+            await show_post_button_picker(chat_id, user_id, {"mode": "vip_promo", "btn_ids": [], "footer": True, "react": True})
         elif action == "broadcast":
+            await answer_callback(cid)
             set_session(user_id, "WAIT_BROADCAST")
             await send_message(chat_id, "📣 Send broadcast text or photo+caption:")
         elif action == "reply" and len(parts) == 3:
+            await answer_callback(cid)
             set_session(user_id, "WAIT_ADMIN_REPLY", parts[2])
             await send_message(chat_id, f"💬 Type reply to user <code>{parts[2]}</code>:")
         elif action == "packages" and is_super_admin(user_id):
+            await answer_callback(cid)
             await show_admin_packages(chat_id)
         elif action == "editprice" and len(parts) == 3 and is_super_admin(user_id):
+            await answer_callback(cid)
             set_session(user_id, "WAIT_PLAN_PRICE", parts[2])
             await send_message(chat_id, f"💰 Enter new KES price for <b>{parts[2]}</b>:")
         elif action == "channels" and is_super_admin(user_id):
+            await answer_callback(cid)
             await send_message(
                 chat_id,
                 f"⚙️ <b>SETTINGS</b>\nMain: <code>{get_setting('main_channel_id')}</code>\nVIP: <code>{get_setting('vip_channel_id')}</code>\nWebsite: <code>{get_website_url()}</code>\n\nUse <code>/setsetting &lt;key&gt; &lt;value&gt;</code>",
                 admin_keyboard(user_id),
             )
         elif action == "export" and is_super_admin(user_id):
+            await answer_callback(cid)
             await export_csv_backups(chat_id)
         elif action == "audit" and is_super_admin(user_id):
+            await answer_callback(cid)
             with connect_db() as db:
                 logs = db.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15").fetchall()
             txt = "🛡️ <b>RECENT AUDIT LOGS</b>\n\n" + ("\n".join(f"• {l['action']} by <code>{l['actor_id']}</code>: {html_escape(l['details'])}" for l in logs) or "No logs yet.")
             await send_message(chat_id, txt, admin_keyboard(user_id))
+        else:
+            await answer_callback(cid)
         return
 
 
@@ -2131,7 +2885,7 @@ async def show_admin_matches(chat_id, user_id):
 async def show_admin_transactions(chat_id, user_id):
     with connect_db() as db:
         orders = db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 10").fetchall()
-    txt = "🧾 <b>TRANSACTIONS</b>\n\n" + ("\n".join(f"• <code>{o['external_ref']}</code> {o['plan']} {o['local_amount']} [{o['status']}]" for o in orders) or "No transactions yet.")
+    txt = "🧾 <b>TRANSACTIONS</b>\n\n" + ("\n".join(f"• <code>{o['external_ref']}</code> {html_escape(format_order_item_name(o['plan']))} {o['local_amount']} [{o['status']}]" for o in orders) or "No transactions yet.")
     await send_message(chat_id, txt, admin_keyboard(user_id))
 
 
@@ -2157,7 +2911,7 @@ async def export_csv_backups(chat_id):
     w = csv.writer(buf)
     w.writerow(["external_ref", "user_id", "plan", "amount_kes", "currency", "local_amount", "provider", "status", "receipt", "created_at"])
     for o in orders:
-        w.writerow([o["external_ref"], o["user_id"], o["plan"], o["amount"], o["currency"], o["local_amount"], o["provider"], o["status"], o["mpesa_receipt"], o["created_at"]])
+        w.writerow([o["external_ref"], o["user_id"], format_order_item_name(o["plan"]), o["amount"], o["currency"], o["local_amount"], o["provider"], o["status"], o["mpesa_receipt"], o["created_at"]])
     await telegram_send_document(chat_id, "prime_tips_empire_orders.csv", buf.getvalue().encode("utf-8"), "📦 Orders CSV Backup")
 
 
@@ -2217,6 +2971,10 @@ async def lifespan(app: FastAPI):
     check_settings()
     init_db()
     http_client = httpx.AsyncClient(timeout=35)
+    try:
+        await ensure_bot_username()
+    except Exception:
+        pass
     worker = asyncio.create_task(background_worker())
     try:
         yield
