@@ -54,6 +54,7 @@ PAYHERO_API_USERNAME = env_str("PAYHERO_API_USERNAME")
 PAYHERO_API_PASSWORD = env_str("PAYHERO_API_PASSWORD")
 PAYHERO_CHANNEL_ID = env_str("PAYHERO_CHANNEL_ID")
 PAYHERO_CREDENTIAL_ID = env_str("PAYHERO_CREDENTIAL_ID")
+PAYHERO_CALLBACK_URL = env_str("PAYHERO_CALLBACK_URL")
 
 CRYPTAPI_CALLBACK_BASE_URL = env_str("CRYPTAPI_CALLBACK_BASE_URL")
 CRYPTAPI_CONFIRMATIONS = env_str("CRYPTAPI_CONFIRMATIONS", "1")
@@ -66,6 +67,9 @@ FOOTBALL_API_KEY = env_str("FOOTBALL_API_KEY")
 AI_API_KEY = env_str("AI_API_KEY")
 
 PUBLIC_URL = env_str("RENDER_EXTERNAL_URL") or env_str("PUBLIC_URL")
+if PUBLIC_URL and not PUBLIC_URL.startswith(("http://", "https://")):
+    PUBLIC_URL = "https://" + PUBLIC_URL
+
 WEBSITE_URL_ENV = env_str("WEBSITE_URL", DEFAULT_WEBSITE_URL)
 DATABASE_URL = env_str("DATABASE_URL")
 DB_PATH = env_str("DB_PATH", "john_tipster.db")
@@ -220,27 +224,40 @@ def connect_db():
     if USE_POSTGRES:
         pool = get_pg_pool()
         raw = pool.getconn()
+        broken = False
         try:
             if raw.closed:
                 pool.putconn(raw, close=True)
                 raw = pool.getconn()
+            else:
+                with raw.cursor() as c:
+                    c.execute("SELECT 1")
         except Exception:
-            raw = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+            try:
+                pool.putconn(raw, close=True)
+            except Exception:
+                pass
+            raw = pool.getconn()
         db = DBConn(raw)
         try:
             yield db
             raw.commit()
-        except Exception:
+        except Exception as exc:
+            broken = isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError))
             try:
-                raw.rollback()
+                if not raw.closed:
+                    raw.rollback()
             except Exception:
-                pass
+                broken = True
             raise
         finally:
             try:
-                pool.putconn(raw)
+                pool.putconn(raw, close=broken or bool(raw.closed))
             except Exception:
-                raw.close()
+                try:
+                    raw.close()
+                except Exception:
+                    pass
     else:
         raw = sqlite3.connect(DB_PATH, timeout=30)
         raw.row_factory = sqlite3.Row
@@ -887,18 +904,26 @@ async def create_manual_order_and_prompt(user_id, offer_key, method_key):
     await send_message(user_id, f"🌍 <b>INTERNATIONAL PAYMENT</b>\n🎫 <b>{html_escape(offer['title'])}</b> | 💰 <b>{html_escape(disp)}</b>\n🔗 Ref: <code>{ext_ref}</code>\n\n{html_escape(get_setting('intl_payment_note'))}\n\nSend screenshot/PDF receipt here after paying!", {"inline_keyboard": [[{"text": f"💬 Contact {BRAND_TAG}", "url": get_setting("admin_contact_url"), "style": "primary"}], [{"text": "📸 Send Screenshot / PDF", "callback_data": f"proof:{ext_ref}", "style": "success"}], [{"text": "🏠 Main Menu", "callback_data": "menu:home"}]]})
 
 
+def _extract_payhero_channels(ch_data):
+    if isinstance(ch_data, list):
+        return ch_data
+    if isinstance(ch_data, dict):
+        return ch_data.get("payment_channels") or ch_data.get("channels") or ch_data.get("data") or []
+    return []
+
+
 async def fetch_payhero_diagnostics():
     client = await get_http()
     hdrs = payhero_headers()
 
-    async def get_ep(path, params):
+    async def get_ep(path, params=None):
         try:
-            r = await client.get(PAYHERO_URL + path, headers=hdrs, params=params, timeout=15)
+            r = await client.get(PAYHERO_URL + path, headers=hdrs, params=params or {}, timeout=15)
             return {"status": r.status_code, "data": r.json() if "application/json" in r.headers.get("content-type", "") else r.text[:300]}
         except Exception as e:
             return {"status": 0, "error": str(e)}
 
-    ch_res, wal_res = await asyncio.gather(get_ep("/payment_channels", {"is_active": "true"}), get_ep("/wallets", {"wallet_type": "service_wallet"}))
+    ch_res, wal_res = await asyncio.gather(get_ep("/payment_channels"), get_ep("/wallets", {"wallet_type": "service_wallet"}))
     return {"channels": ch_res, "wallet": wal_res}
 
 
@@ -923,15 +948,34 @@ async def start_mpesa_payment(user_id, offer_key, phone, notify_telegram=True):
     with connect_db() as db:
         db.execute("INSERT INTO orders(external_ref,user_id,plan,amount,amount_usd,market_scope,currency,local_amount,phone,provider,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (ext_ref, user_id, offer["key"], amount, 0.0, "LOCAL", "KES", f"KES {amount:,}", phone, "mpesa", "PENDING", utcnow().isoformat()))
 
-    payload = {"amount": amount, "phone_number": phone, "channel_id": ph_ch, "provider": "m-pesa", "external_reference": ext_ref, "customer_name": cname, "callback_url": PUBLIC_URL.rstrip("/") + "/payhero/callback"}
+    cb_url = PAYHERO_CALLBACK_URL or (PUBLIC_URL.rstrip("/") + "/payhero/callback")
+    payload = {"amount": amount, "phone_number": phone, "channel_id": ph_ch, "provider": "m-pesa", "external_reference": ext_ref, "customer_name": cname, "callback_url": cb_url}
     if PAYHERO_CREDENTIAL_ID:
         payload["credential_id"] = PAYHERO_CREDENTIAL_ID
+    client = await get_http()
     try:
-        resp = await (await get_http()).post(PAYHERO_URL + "/payments", headers=payhero_headers(), json=payload)
+        resp = await client.post(PAYHERO_URL + "/payments", headers=payhero_headers(), json=payload)
         res = resp.json() if "application/json" in resp.headers.get("content-type", "") else {"raw": resp.text[:300]}
+
+        if resp.status_code == 404:
+            try:
+                chr_r = await client.get(PAYHERO_URL + "/payment_channels", headers=payhero_headers(), params={"is_active": "true"}, timeout=12)
+                if chr_r.status_code == 200:
+                    chs = [c for c in _extract_payhero_channels(chr_r.json()) if c.get("is_active", True)]
+                    till_no = get_setting("mpesa_till_number", DEFAULT_MPESA_TILL)
+                    pk = next((c for c in chs if str(c.get("short_code", "")) == str(till_no)), None) or (chs[0] if len(chs) == 1 else None)
+                    if pk and pk.get("id") and int(pk["id"]) != ph_ch:
+                        ph_ch = int(pk["id"])
+                        set_setting("payhero_channel_id", str(ph_ch))
+                        payload["channel_id"] = ph_ch
+                        resp = await client.post(PAYHERO_URL + "/payments", headers=payhero_headers(), json=payload)
+                        res = resp.json() if "application/json" in resp.headers.get("content-type", "") else {"raw": resp.text[:300]}
+            except Exception:
+                pass
+
         if not ((resp.status_code in (200, 201)) and (res.get("success") or res.get("reference"))):
             err = res.get("error_message") or res.get("message") or str(res)[:200]
-            asyncio.create_task(send_message(ADMIN_USER_ID, f"⚠️ <b>PayHero STK Failed (HTTP {resp.status_code})</b>\nChannel: <code>{ph_ch}</code> | <code>{html_escape(str(err))}</code>"))
+            asyncio.create_task(send_message(ADMIN_USER_ID, f"⚠️ <b>PayHero STK Failed (HTTP {resp.status_code})</b>\nChannel tried: <code>{ph_ch}</code> | <code>{html_escape(str(err))}</code>\n👉 Tap <b>Admin → Settings → 🩺 Test PayHero & Channels</b>."))
             if notify_telegram:
                 await send_manual_till_fallback(user_id, ext_ref, offer["title"], amount, f"STK Push unavailable — use Manual Till {get_setting('mpesa_till_number', DEFAULT_MPESA_TILL)}!")
             return {"ok": False}
@@ -1140,6 +1184,8 @@ async def start_cryptapi_payment(user_id, chat_id, offer_key, ticker):
     client = await get_http()
     try:
         cv = (await client.get(f"{CRYPTAPI_URL}/{ticker}/convert/", params={"value": f"{usd_amt:.2f}", "from": "USD"}, timeout=15)).json()
+        if cv.get("status") == "error" or "value_coin" not in cv:
+            raise RuntimeError(cv.get("error") or str(cv))
         val_coin = float(cv["value_coin"])
     except Exception as e:
         await send_message(chat_id, f"⚠️ Conversion failed: <code>{html_escape(str(e))}</code>")
@@ -1760,24 +1806,32 @@ async def show_admin_payhero_diag(chat_id, message_id=None):
     cur_ch = get_setting("payhero_channel_id", PAYHERO_CHANNEL_ID)
     diag = await fetch_payhero_diagnostics()
     ch_res, wal_res = diag["channels"], diag["wallet"]
-    lines = ["🩺 <b>PAYHERO DIAGNOSTICS</b>", f"🔢 Channel ID: <code>{html_escape(str(cur_ch))}</code>\n"]
+    lines = ["🩺 <b>PAYHERO DIAGNOSTICS</b>", f"🔢 Configured Channel ID: <code>{html_escape(str(cur_ch))}</code>\n"]
     ws, wd = wal_res.get("status"), wal_res.get("data")
     if ws == 200 and isinstance(wd, dict):
-        bal = wd.get("balance") or (wd.get("data") or {}).get("balance")
-        lines.append(f"💰 Service Wallet: <b>HTTP 200</b> — <b>KES {html_escape(str(bal if bal is not None else wd))}</b>")
+        bal = wd.get("available_balance")
+        if bal is None:
+            bal = wd.get("balance")
+        lines.append(f"💰 Service Wallet (Acct <code>{wd.get('account_id', '')}</code>): <b>KES {html_escape(str(bal))}</b>")
     else:
         lines.append(f"❌ Service Wallet: <b>HTTP {ws}</b> — <code>{html_escape(str(wal_res.get('error') or wd)[:150])}</code>")
     cs, cd = ch_res.get("status"), ch_res.get("data")
     rows = []
     if cs == 200:
-        items = cd if isinstance(cd, list) else (cd.get("channels") or cd.get("data") or [] if isinstance(cd, dict) else [])
-        lines.append(f"✅ Active Channels (<b>{len(items)}</b>):")
+        items = _extract_payhero_channels(cd)
+        lines.append(f"\n📡 Registered Payment Channels (<b>{len(items)}</b>):")
+        if not items:
+            lines.append("⚠️ <b>No channels on this PayHero account!</b> Add one in PayHero Dashboard → Payment Channels.")
         for ch in items[:10]:
-            cid_v, cn = ch.get("id") or ch.get("channel_id"), ch.get("name") or ch.get("channel_type") or "Channel"
+            cid_v = ch.get("id") or ch.get("channel_id")
+            sc = ch.get("short_code") or ""
+            desc = ch.get("description") or ch.get("channel_type") or "Channel"
+            active = ch.get("is_active", True)
             is_c = str(cid_v) == str(cur_ch)
-            lines.append(f"  {'✅' if is_c else '•'} ID <code>{cid_v}</code> — {html_escape(str(cn))}")
-            if cid_v and not is_c:
-                rows.append([{"text": f"🔄 Use Channel {cid_v} ({cn})", "callback_data": f"admin:ph_use_ch:{cid_v}", "style": "success"}])
+            ico = "✅" if (is_c and active) else ("🟢" if active else "🔴 Inactive")
+            lines.append(f"  {ico} ID: <code>{cid_v}</code> | Code: <code>{html_escape(str(sc))}</code> ({html_escape(str(desc))})")
+            if cid_v and active and not is_c:
+                rows.append([{"text": f"🔄 Use Channel {cid_v} ({sc} {desc})", "callback_data": f"admin:ph_use_ch:{cid_v}", "style": "success"}])
     else:
         lines.append(f"❌ Channels Auth: <b>HTTP {cs}</b> — <code>{html_escape(str(ch_res.get('error') or cd)[:150])}</code>")
     rows.append([{"text": "🔄 Re-run", "callback_data": "admin:payhero_diag", "style": "primary"}, {"text": "⬅️ Settings", "callback_data": "admin:channels"}])
@@ -1805,7 +1859,7 @@ async def handle_message(message):
     uid = user.get("id")
     co = message.get("chat", {})
     cid, ctype = co.get("id"), co.get("type", "private")
-    if not uid or not cid:
+    if not uid or not cid or ctype != "private":
         return
     plist = message.get("photo") or []
     pfid = plist[-1]["file_id"] if plist else None
@@ -2020,7 +2074,10 @@ async def handle_message(message):
                 await send_message(cid, "✅ Sent.", admin_keyboard(uid))
             elif st == "WAIT_CHANNEL_POST":
                 clear_session(uid)
-                pk = json.loads(pl)
+                try:
+                    pk = json.loads(pl)
+                except Exception:
+                    pk = {"btn_ids": [], "footer": True, "react": True}
                 await publish_custom_main_post(text, photo_file_id=pfid, selected_btn_ids=pk.get("btn_ids", []), include_footer=pk.get("footer", True), include_reactions=pk.get("react", True))
                 await send_message(cid, "✅ Published to Main Channel!", admin_keyboard(uid))
             elif st == "WAIT_VIP_CHANNEL_POST":
@@ -2043,7 +2100,12 @@ async def handle_message(message):
             elif st == "WAIT_BTN_ADD_TICKET":
                 parts = [p.strip() for p in text.split("|")]
                 if len(parts) >= 2 and parts[1].isdigit():
-                    pr, ipr, dy = int(parts[1]), float(parts[2]) if len(parts) >= 3 else 0.0, int(parts[3]) if (len(parts) >= 4 and parts[3].isdigit()) else 1
+                    pr = int(parts[1])
+                    try:
+                        ipr = float(parts[2].replace("$", "").strip()) if len(parts) >= 3 else 0.0
+                    except ValueError:
+                        ipr = 0.0
+                    dy = int(parts[3]) if (len(parts) >= 4 and parts[3].isdigit()) else 1
                     clear_session(uid)
                     with connect_db() as db:
                         nid = insert_returning_id(db, "INSERT INTO custom_buttons(label,url,button_type,price,intl_price_usd,days,description,style,is_active) VALUES(?,?,?,?,?,?,?,?,1)", (parts[0][:64], "", "TICKET", pr, ipr, dy, "", "primary"))
@@ -2845,7 +2907,11 @@ async def cryptapi_callback(request: Request):
         except Exception:
             pass
     try:
-        if await verify_cryptapi_order_via_logs(order) == "NO_TX" and bd.get("txid_in"):
+        res = await verify_cryptapi_order_via_logs(order)
+        if res == "PENDING_CONFIRMATION" and str(bd.get("pending", "1")) in ("0", "false", "False"):
+            await asyncio.sleep(1.5)
+            res = await verify_cryptapi_order_via_logs(order)
+        if res == "NO_TX" and bd.get("txid_in"):
             await process_cryptapi_event(order, bd)
     except Exception:
         return PlainTextResponse("retry", status_code=503)
@@ -2868,4 +2934,4 @@ if CRYPTAPI_VERIFY_FILE_NAME and CRYPTAPI_VERIFY_FILE_CONTENT:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
-
+```
