@@ -192,7 +192,7 @@ def is_admin_private_chat(user_id, chat_id, chat_type="private"):
 def get_pg_pool():
     global _pg_pool
     if _pg_pool is None and USE_POSTGRES:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 16, DATABASE_URL, connect_timeout=8)
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 8, DATABASE_URL, connect_timeout=5)
     return _pg_pool
 
 
@@ -225,7 +225,7 @@ def connect_db():
                 pool.putconn(raw, close=True)
                 raw = pool.getconn()
         except Exception:
-            raw = psycopg2.connect(DATABASE_URL, connect_timeout=8)
+            raw = psycopg2.connect(DATABASE_URL, connect_timeout=5)
         db = DBConn(raw)
         try:
             yield db
@@ -275,6 +275,9 @@ def reload_settings_cache():
 def init_db():
     pk = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
     with connect_db() as db:
+        if USE_POSTGRES:
+            db.execute("SET lock_timeout = '3000ms'")
+            db.execute("SET statement_timeout = '10000ms'")
         db.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, first_name TEXT, country TEXT NOT NULL DEFAULT '', country_confirmed INTEGER NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'USD', timezone_name TEXT NOT NULL DEFAULT 'UTC', referred_by BIGINT, referral_rewarded INTEGER NOT NULL DEFAULT 0, is_blocked INTEGER NOT NULL DEFAULT 0, notify_free INTEGER NOT NULL DEFAULT 1, notify_vip INTEGER NOT NULL DEFAULT 1, notify_news INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS plans (name TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', price INTEGER NOT NULL, days INTEGER NOT NULL, benefits TEXT NOT NULL DEFAULT '', is_lifetime INTEGER NOT NULL DEFAULT 0)")
         db.execute("CREATE TABLE IF NOT EXISTS intl_plans (name TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', price_usd DOUBLE PRECISION NOT NULL, days INTEGER NOT NULL, benefits TEXT NOT NULL DEFAULT '', is_lifetime INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1)")
@@ -295,6 +298,11 @@ def init_db():
         db.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         db.execute(f"CREATE TABLE IF NOT EXISTS audit_logs (id {pk}, actor_id BIGINT NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)")
 
+        existing_cols = set()
+        if USE_POSTGRES:
+            for r in db.execute("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public'").fetchall():
+                existing_cols.add((r["table_name"], r["column_name"]))
+
         for tbl, col, defn in [
             ("users", "country", "TEXT NOT NULL DEFAULT ''"), ("users", "country_confirmed", "INTEGER NOT NULL DEFAULT 0"),
             ("users", "currency", "TEXT NOT NULL DEFAULT 'USD'"), ("users", "timezone_name", "TEXT NOT NULL DEFAULT 'UTC'"),
@@ -311,7 +319,8 @@ def init_db():
             ("custom_buttons", "days", "INTEGER NOT NULL DEFAULT 1"), ("custom_buttons", "description", "TEXT NOT NULL DEFAULT ''"),
             ("custom_buttons", "style", "TEXT NOT NULL DEFAULT 'primary'"), ("custom_buttons", "is_active", "INTEGER NOT NULL DEFAULT 1"),
         ]:
-            ensure_column(db, tbl, col, defn)
+            if not USE_POSTGRES or (tbl, col) not in existing_cols:
+                ensure_column(db, tbl, col, defn)
 
         for row in [
             ("daily", "Daily VIP", 100, 1, "24 Hours VIP access • Daily picks", 0),
@@ -2679,6 +2688,7 @@ async def background_worker():
         try:
             bot_username = (await telegram("getMe", {}))["username"]
             await telegram("setWebhook", {"url": PUBLIC_URL.rstrip("/") + "/telegram", "secret_token": WEBHOOK_SECRET, "allowed_updates": ["message", "callback_query", "chat_join_request"]})
+            log.info("%s webhook ready as @%s", PROJECT_NAME, bot_username)
             break
         except Exception:
             await asyncio.sleep(5)
@@ -2728,13 +2738,9 @@ async def background_worker():
 async def lifespan(app: FastAPI):
     global http_client
     check_settings()
-    init_db()
-    _load_fx_into_mem()
+    await asyncio.to_thread(init_db)
+    await asyncio.to_thread(_load_fx_into_mem)
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0), limits=httpx.Limits(max_connections=60, max_keepalive_connections=20))
-    try:
-        await ensure_bot_username()
-    except Exception:
-        pass
     worker = asyncio.create_task(background_worker())
     try:
         yield
@@ -2862,6 +2868,4 @@ if CRYPTAPI_VERIFY_FILE_NAME and CRYPTAPI_VERIFY_FILE_CONTENT:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
-```
 
-Make sure the bot is an **Administrator** (with the **Invite Users / Add Members** permission) in every channel/group where you want it to auto-approve join requests!
