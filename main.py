@@ -1,4 +1,5 @@
 
+
 import os
 import io
 import re
@@ -89,7 +90,7 @@ BUTTON_STYLES = ["primary", "success", "danger"]
 LOCAL_COUNTRIES = {"KE", "TZ", "UG", "ZM"}
 
 bot_username = None
-http_client = None
+http_client: httpx.AsyncClient | None = None
 _pg_pool = None
 _settings_cache = {}
 _settings_loaded = False
@@ -2857,46 +2858,11 @@ async def api_predictions():
     return {"win_rate": round(won / dec * 100, 1) if dec else None, "free_predictions": [dict(r) for r in free]}
 
 
-PORTAL_HTML = """<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITLE__</title>
-<style>
-  body{margin:0;font-family:system-ui,sans-serif;background:#06070d;color:#f8fafc;padding:16px}
-  .hero{background:#1e1b4b;border:1px solid #f59e0b;border-radius:16px;padding:18px}
-  .card{background:#0d142b;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-top:10px}
-  select{width:100%;margin-top:8px;padding:9px;border-radius:8px;background:#0f172a;color:#fff;border:1px solid #334155}
-  .btn{display:block;text-align:center;margin-top:14px;padding:12px;border-radius:10px;background:#7c3aed;color:#fff;font-weight:700;text-decoration:none}
-</style></head><body>
-<div class="hero"><h2>👑 __TITLE__</h2>
-  <select id="sc" onchange="ld()">
-    <option value="LOCAL">🇰🇪 East Africa Local (KES)</option>
-    <option value="INTL">🌍 International ($ USD / Crypto)</option>
-  </select>
-  <select id="cu" onchange="ld()">__OPTS__</select>
-</div>
-<div id="bd" class="card">Loading...</div>
-<a class="btn" href="__BLINK__">⚡ Join VIP in Telegram</a>
-<script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-function ld(){
-  const s=document.getElementById('sc').value,c=document.getElementById('cu').value;
-  Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages?scope='+s+'&currency='+c).then(r=>r.json())]).then(([p,k])=>{
-    let h=`<b>Win Rate:</b> ${esc(p.win_rate??'Tracking')}%<h3>⚽ Free Picks</h3>`;
-    p.free_predictions.forEach(m=>{h+=`<div class="card"><b>${esc(m.match_name)}</b><br>${esc(m.tip)} (${esc(m.odds)}) • ${esc(m.result)}</div>`;});
-    h+=`<h3>👑 VIP (${esc(k.scope)})</h3>`;
-    k.packages.forEach(x=>{h+=`<div class="card"><b>${esc(x.title)}</b> — ${esc(x.display_price)}<br><small>${esc(x.benefits)}</small></div>`;});
-    document.getElementById('bd').innerHTML=h;
-  });
-}
-ld();
-</script></body></html>"""
-
-
 @app.get("/app", response_class=HTMLResponse)
 async def empire_portal():
     blink = f"https://t.me/{bot_username}?start=vip" if bot_username else "#"
     opts = "".join(f'<option value="{c}">{c}</option>' for c in CURRENCIES)
-    return PORTAL_HTML.replace("__TITLE__", PROJECT_NAME).replace("__OPTS__", opts).replace("__BLINK__", blink)
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{PROJECT_NAME}</title><style>body{{margin:0;font-family:system-ui,sans-serif;background:#06070d;color:#f8fafc;padding:16px}}.hero{{background:#1e1b4b;border:1px solid #f59e0b;border-radius:16px;padding:18px}}.card{{background:#0d142b;border:1px solid #1e293b;border-radius:12px;padding:12px;margin-top:10px}}select{{width:100%;margin-top:8px;padding:9px;border-radius:8px;background:#0f172a;color:#fff;border:1px solid #334155}}.btn{{display:block;text-align:center;margin-top:14px;padding:12px;border-radius:10px;background:#7c3aed;color:#fff;font-weight:700;text-decoration:none}}</style></head><body><div class="hero"><h2>👑 {PROJECT_NAME}</h2><select id="sc" onchange="ld()"><option value="LOCAL">🇰🇪 East Africa Local (KES)</option><option value="INTL">🌍 International ($ USD / Crypto)</option></select><select id="cu" onchange="ld()">{opts}</select></div><div id="bd" class="card">Loading...</div><a class="btn" href="{blink}">⚡ Join VIP in Telegram</a><script>const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m]));function ld(){{const s=document.getElementById('sc').value,c=document.getElementById('cu').value;Promise.all([fetch('/api/predictions').then(r=>r.json()),fetch('/api/packages?scope='+s+'&currency='+c).then(r=>r.json())]).then(([p,k])=>{{let h=`<b>Win Rate:</b> ${{esc(p.win_rate??'Tracking')}}%<h3>⚽ Free Picks</h3>`;p.free_predictions.forEach(m=>{{h+=`<div class="card"><b>${{esc(m.match_name)}}</b><br>${{esc(m.tip)}} (${{esc(m.odds)}}) • ${{esc(m.result)}}</div>`;}});h+=`<h3>👑 VIP (${{esc(k.scope)}})</h3>`;k.packages.forEach(x=>{{h+=`<div class="card"><b>${{esc(x.title)}}</b> — ${{esc(x.display_price)}}<br><small>${{esc(x.benefits)}}</small></div>`;}});document.getElementById('bd').innerHTML=h;}});}}ld();</script></body></html>"""
 
 
 @app.post("/telegram")
@@ -2969,4 +2935,4 @@ if CRYPTAPI_VERIFY_FILE_NAME and CRYPTAPI_VERIFY_FILE_CONTENT:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
-```
+
